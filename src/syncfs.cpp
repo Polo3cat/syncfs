@@ -1,7 +1,9 @@
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <map>
 #include <print>
+#include <span>
 #include <utility>
 
 #include <files.h>
@@ -28,9 +30,17 @@ namespace {
 }
 }// namespace
 
-auto main() -> int
+auto main(int argc, char *argv[]) -> int
 try {
-    const sink::Sink remote;
+    if (argc < 2) {
+        std::println("Usage: syncf <destination>");
+        std::println("Synchronizes the working directory with <destination>");
+        return EXIT_FAILURE;
+    }
+    auto args = std::span(argv, size_t(argc));
+
+    const sink::Sink remote{ std::filesystem::directory_entry{ args[1] } };
+
     sync_loop(remote);
 } catch (std::exception &e) {
     try {
