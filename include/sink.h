@@ -12,19 +12,26 @@ concept Pair = requires(T t) {
 
 struct Sink
 {
-    template<Iterable T> void operator<<(T container) const
+    template<Iterable T> void create(T container) const
     {
-        for (const auto &el : container) { *this << el; }
+        for (const auto &el : container) { create(el); }
     }
-    template<Pair T> void operator<<(T pair) const { *this << pair.first; }
-    void operator<<(std::string file) const { std::println("Add {}", file); }
+    template<Pair T> void create(T pair) const { create(pair.first); }
+    static void create(std::string file)  { std::println("Add {}", file); }
 
-    template<Iterable T> void operator>>(T container) const
+    template<Iterable T> void remove(T container) const
     {
-        for (const auto &el : container) { *this >> el; }
+        for (const auto &el : container) { remove(el); }
     }
-    template<Pair T> void operator>>(T pair) const { *this >> pair.first; }
-    void operator>>(std::string file) const { std::println("Remove {}", file); }
+    template<Pair T> void remove(T pair) const { remove(pair.first); }
+    static void remove(std::string file)  { std::println("Remove {}", file); }
+
+    template<Iterable T> void update(T container) const
+    {
+        for (const auto &el : container) { update(el); }
+    }
+    template<Pair T> void update(T pair) const { update(pair.first); }
+    static void update(std::string file)  { std::println("Update {}", file); }
 
     
 };

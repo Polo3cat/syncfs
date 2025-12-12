@@ -1,45 +1,35 @@
-#include <chrono>
 #include <cstdlib>
-#include <filesystem>
-#include <format>
-#include <iostream>
 #include <map>
-#include <sstream>
-#include <string>
 #include <utility>
-#include <vector>
 
 #include <files.h>
 #include <sink.h>
 
-using file_map_t = std::map<std::string, std::filesystem::file_time_type>;
-using file_vec_t = std::vector<std::pair<std::string, std::filesystem::file_time_type>>;
-
 namespace {
-void print(const auto &containter)
+[[noreturn]] void sync_loop(const sink::Sink &remote)
 {
-    std::stringstream ss;
-    for (const auto &it : containter) {
-        ss << it.first << " " << std::format("{}", std::chrono::floor<std::chrono::seconds>(it.second)) << '\n';
+    auto former = files::list();
+    // This obviously has to use inotify
+    while (true) {
+        auto current = files::list();
+
+        const auto removed = files::diff(former, current);
+        const auto created = files::diff(current, former);
+        const auto modified = files::intersection_name(removed, created);
+
+        remote.remove(files::diff_name(removed, modified));
+        remote.create(files::diff_name(created, modified));
+        remote.update(modified);
+
+        former = std::move(current);
     }
-    std::cout << ss.str() << std::flush;
 }
 }// namespace
 
 auto main() -> int
 try {
-    auto former = files::Files();
     const sink::Sink remote;
-    while (true) {
-        auto current = files::Files(former);
-        if (not current.removed_files.empty()) {
-            remote >> current.removed_files;
-        }
-        if (not current.added_files.empty()) {
-            remote << current.added_files;
-        }
-        former = std::move(current);
-    }
+    sync_loop(remote);
 } catch (...) {
     return EXIT_FAILURE;
 }
