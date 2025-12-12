@@ -2,11 +2,10 @@
 
 #include <filesystem>
 #include <map>
-#include <string>
 
 namespace files {
 
-using file_map_t = std::map<std::string, std::filesystem::file_time_type>;
+using file_map_t = std::map<std::filesystem::path, std::filesystem::file_time_type>;
 
 auto list() -> file_map_t;
 auto diff(const file_map_t &, const file_map_t &) -> file_map_t;

@@ -4,7 +4,6 @@
 #include <iterator>
 #include <map>
 #include <ranges>
-#include <string>
 #include <system_error>
 #include <utility>
 
@@ -25,13 +24,12 @@ namespace {
 auto list() -> files::file_map_t
 {
     return std::views::all(std::filesystem::recursive_directory_iterator(std::filesystem::current_path()))
-           | std::views::transform(
-               [](const auto &entry_it) { return std::pair(entry_it.path(), last_write_time(entry_it)); })
+           | std::views::transform([](const auto &entry_it) { return std::pair(entry_it, last_write_time(entry_it)); })
            | std::views::filter([](const auto &path_write_time) { return path_write_time.second.has_value(); })
            | std::views::transform([](const auto &path_write_time) {
                  return std::pair(path_write_time.first, path_write_time.second.value());
              })
-           | std::ranges::to<std::map<std::string, std::filesystem::file_time_type>>();
+           | std::ranges::to<std::map<std::filesystem::path, std::filesystem::file_time_type>>();
 }
 
 auto diff(const file_map_t &left, const file_map_t &right) -> file_map_t

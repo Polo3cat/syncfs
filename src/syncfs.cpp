@@ -1,5 +1,7 @@
 #include <cstdlib>
+#include <exception>
 #include <map>
+#include <print>
 #include <utility>
 
 #include <files.h>
@@ -30,6 +32,11 @@ auto main() -> int
 try {
     const sink::Sink remote;
     sync_loop(remote);
-} catch (...) {
+} catch (std::exception &e) {
+    try {
+        std::println("{}", e.what());
+    } catch (...) {
+        return EXIT_FAILURE;
+    }
     return EXIT_FAILURE;
 }
