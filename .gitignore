@@ -1,9 +1,11 @@
 # Build directories and binary files
+.build/
 build/
 out/
 out/coverage/*
 cmake-build-*/
 conan-cache/
+.install
 
 # User spesific settings
 CMakeUserPresets.json
