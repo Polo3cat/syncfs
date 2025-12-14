@@ -9,6 +9,7 @@ Checks: "*,
         -llvmlibc-*,
         -readability-identifier-length,
         -concurrency-mt-unsafe,
+        -misc-no-recursion,
 "
 WarningsAsErrors: ''
 HeaderFilterRegex: ''
