@@ -25,7 +25,10 @@ auto list() -> files::file_map_t
 {
     return std::views::all(std::filesystem::recursive_directory_iterator(std::filesystem::current_path()))
            | std::views::transform([](const auto &entry_it) { return std::pair(entry_it, last_write_time(entry_it)); })
-           | std::views::filter([](const auto &path_write_time) { return path_write_time.second.has_value(); })
+           | std::views::filter([](const auto &path_write_time) {
+                 return path_write_time.first.is_regular_file() && !path_write_time.first.is_symlink()
+                        && path_write_time.second.has_value();
+             })
            | std::views::transform([](const auto &path_write_time) {
                  return std::pair(path_write_time.first, path_write_time.second.value());
              })
