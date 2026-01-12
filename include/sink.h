@@ -30,11 +30,11 @@ struct Sink
 
     explicit Sink(zmq::context_t &ctx, const std::string &remote) : client{ detail::init_client(ctx, remote) } {}
 
-    template<Iterable T> void create(T container) const
+    template<Iterable T> void create(const T &container) const
     {
         for (const auto &el : container) { create(el); }
     }
-    template<Pair T> void create(T pair) const { create(pair.first); }
+    template<Pair T> void create(const T &pair) const { create(pair.first); }
 
     void create(const std::filesystem::path &file) const
     {
@@ -44,11 +44,11 @@ struct Sink
         [[maybe_unused]] auto res = client.send(buffer);
     }
 
-    template<Iterable T> void remove(T container) const
+    template<Iterable T> void remove(const T &container) const
     {
         for (const auto &el : container) { remove(el); }
     }
-    template<Pair T> void remove(T pair) const { remove(pair.first); }
+    template<Pair T> void remove(const T &pair) const { remove(pair.first); }
     void remove(const std::filesystem::path &file) const
     {
         std::println("Remove {}", file.native());
@@ -57,11 +57,11 @@ struct Sink
         [[maybe_unused]] auto res = client.send(buffer);
     }
 
-    template<Iterable T> void update(T container) const
+    template<Iterable T> void update(const T &container) const
     {
         for (const auto &el : container) { update(el); }
     }
-    template<Pair T> void update(T pair) const { update(pair.first); }
+    template<Pair T> void update(const T &pair) const { update(pair.first); }
     void update(const std::filesystem::path &file) const
     {
         std::println("Update {}", file.native());

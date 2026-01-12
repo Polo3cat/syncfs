@@ -15,33 +15,53 @@
 #include <zmq.hpp>
 
 namespace {
-void sync_loop(const std::vector<sink::Sink>& remotes, zmq::socket_t server)
+struct diff_t
+{
+    files::file_map_t removed;
+    files::file_map_t created;
+    files::file_map_t modified;
+};
+
+auto create_diff(const files::file_map_t &former, const files::file_map_t &current) -> diff_t
+{
+    const auto removed = files::diff(former, current);
+    const auto created = files::diff(current, former);
+    const auto modified = files::intersection_name(removed, created);
+    return diff_t{ .removed = files::diff_name(removed, modified),
+        .created = files::diff_name(created, modified),
+        .modified = modified };
+}
+
+void send(const diff_t &diff, const std::vector<sink::Sink> &remotes)
+{
+    for (const auto &remote : remotes) {
+        remote.remove(diff.removed);
+        remote.create(diff.created);
+        remote.update(diff.modified);
+    }
+}
+
+void receive(zmq::socket_t &s)
+{
+    zmq::message_t msg;
+    auto res = s.recv(msg, zmq::recv_flags::dontwait);
+    if (res.has_value()) {
+        std::println("Server received {} bytes", res.value());
+        std::println("From client {}", msg.routing_id());
+        std::println("Message contents follow");
+        std::println("{}", msg.to_string_view());
+    }
+}
+
+void sync_loop(const std::vector<sink::Sink> &remotes, zmq::socket_t server)
 {
     auto former = files::list();
     // This obviously has to use inotify
     while (true) {
         auto current = files::list();
-
-        const auto removed = files::diff(former, current);
-        const auto created = files::diff(current, former);
-        const auto modified = files::intersection_name(removed, created);
-
-        for (const auto &remote : remotes) {
-            remote.remove(files::diff_name(removed, modified));
-            remote.create(files::diff_name(created, modified));
-            remote.update(modified);
-        }
-
+        send(create_diff(former, current), remotes);
         former = std::move(current);
-
-        zmq::message_t msg;
-        auto res = server.recv(msg, zmq::recv_flags::dontwait);
-        if (res.has_value()) {
-            std::println("Server received {} bytes", res.value());
-            std::println("From client {}", msg.routing_id());
-            std::println("Message contents follow");
-            std::println("{}", msg.to_string_view());
-        }
+        receive(server);
     }
 }
 }// namespace
