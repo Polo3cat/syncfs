@@ -22,3 +22,5 @@ CheckOptions:
     value: 'x|y|z'
   - key: misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic
     value: true
+  - key: cppcoreguidelines-pro-type-member-init.IgnoreArrays
+    value: true

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <filesystem>
+#include <fstream>
+#include <ios>
 #include <iterator>
 #include <print>
 
@@ -18,7 +20,7 @@ concept Pair = requires(T t) {
 namespace detail {
     inline auto init_client(zmq::context_t &ctx, const std::string &remote) -> zmq::socket_t
     {
-        zmq::socket_t s{ ctx, zmq::socket_type::client };
+        zmq::socket_t s{ ctx, zmq::socket_type::pub };
         s.connect(remote);
         return s;
     }
@@ -39,9 +41,15 @@ struct Sink
     void create(const std::filesystem::path &file) const
     {
         std::println("Add {}", file.native());
-        auto msg = std::format("Add {}", file.native());
-        auto buffer = zmq::const_buffer(msg.c_str(), msg.length());
-        [[maybe_unused]] auto res = client.send(buffer);
+
+        static constexpr size_t buf_size = 4ULL * 1024;
+        std::array<char, buf_size> file_buf;
+
+        auto file_stream = std::fstream{ file, std::ios_base::in | std::ios_base::binary };
+        file_stream.read(file_buf.data(), file_buf.size());
+
+        client.send(zmq::str_buffer("add"), zmq::send_flags::sndmore);
+        client.send(zmq::const_buffer(file_buf.data(), file_stream.gcount()));
     }
 
     template<Iterable T> void remove(const T &container) const
@@ -52,9 +60,9 @@ struct Sink
     void remove(const std::filesystem::path &file) const
     {
         std::println("Remove {}", file.native());
-        auto msg = std::format("Remove {}", file.native());
-        auto buffer = zmq::const_buffer(msg.c_str(), msg.length());
-        [[maybe_unused]] auto res = client.send(buffer);
+
+        client.send(zmq::str_buffer("remove"), zmq::send_flags::sndmore);
+        client.send(zmq::const_buffer(file.native().c_str(), file.native().size()));
     }
 
     template<Iterable T> void update(const T &container) const
@@ -65,9 +73,15 @@ struct Sink
     void update(const std::filesystem::path &file) const
     {
         std::println("Update {}", file.native());
-        auto msg = std::format("Update {}", file.native());
-        auto buffer = zmq::const_buffer(msg.c_str(), msg.length());
-        [[maybe_unused]] auto res = client.send(buffer);
+
+        static constexpr size_t buf_size = 4ULL * 1024;
+        std::array<char, buf_size> file_buf;
+
+        auto file_stream = std::fstream{ file, std::ios_base::in | std::ios_base::binary };
+        file_stream.read(file_buf.data(), file_buf.size());
+
+        client.send(zmq::str_buffer("update"), zmq::send_flags::sndmore);
+        client.send(zmq::const_buffer(file_buf.data(), file_stream.gcount()));
     }
 };
 }// namespace sink

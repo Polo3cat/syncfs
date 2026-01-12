@@ -1,18 +1,19 @@
 #include <cstdlib>
+#include <discovery.h>
 #include <exception>
+#include <files.h>
 #include <filesystem>
+#include <format>
+#include <iterator>
 #include <map>
 #include <print>
 #include <ranges>
+#include <sink.h>
 #include <span>
 #include <utility>
-
-#include <discovery.h>
-#include <files.h>
-#include <format>
-#include <sink.h>
 #include <vector>
 #include <zmq.hpp>
+#include <zmq_addon.hpp>
 
 namespace {
 struct diff_t
@@ -43,13 +44,12 @@ void send(const diff_t &diff, const std::vector<sink::Sink> &remotes)
 
 void receive(zmq::socket_t &s)
 {
-    zmq::message_t msg;
-    auto res = s.recv(msg, zmq::recv_flags::dontwait);
+    std::vector<zmq::message_t> recv_msgs;
+    zmq::recv_result_t res = zmq::recv_multipart(s, std::back_inserter(recv_msgs), zmq::recv_flags::dontwait);
+
     if (res.has_value()) {
-        std::println("Server received {} bytes", res.value());
-        std::println("From client {}", msg.routing_id());
-        std::println("Message contents follow");
-        std::println("{}", msg.to_string_view());
+        std::println("Received the following {} messages", res.value());
+        for (const auto &msg : recv_msgs) { std::println("{}", msg.to_string_view()); }
     }
 }
 
@@ -84,8 +84,11 @@ try {
     auto peers = discovery::parse(std::filesystem::path{ args[1] });
     auto remotes = peers | std::views::transform([&ctx](const auto &p) { return sink::Sink{ ctx, p }; });
 
-    zmq::socket_t server{ ctx, zmq::socket_type::server };
+    zmq::socket_t server{ ctx, zmq::socket_type::sub };
     server.bind(std::format("tcp://{}", args[2]));
+    server.set(zmq::sockopt::subscribe, "add");
+    server.set(zmq::sockopt::subscribe, "remove");
+    server.set(zmq::sockopt::subscribe, "update");
 
     sync_loop(std::ranges::to<std::vector<sink::Sink>>(remotes), std::move(server));
 
