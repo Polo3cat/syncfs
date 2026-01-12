@@ -49,6 +49,7 @@ struct Sink
         file_stream.read(file_buf.data(), file_buf.size());
 
         client.send(zmq::str_buffer("add"), zmq::send_flags::sndmore);
+        client.send(zmq::const_buffer(file.native().c_str(), file.native().size()), zmq::send_flags::sndmore);
         client.send(zmq::const_buffer(file_buf.data(), file_stream.gcount()));
     }
 
@@ -81,6 +82,7 @@ struct Sink
         file_stream.read(file_buf.data(), file_buf.size());
 
         client.send(zmq::str_buffer("update"), zmq::send_flags::sndmore);
+        client.send(zmq::const_buffer(file.native().c_str(), file.native().size()), zmq::send_flags::sndmore);
         client.send(zmq::const_buffer(file_buf.data(), file_stream.gcount()));
     }
 };
