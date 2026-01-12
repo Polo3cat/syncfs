@@ -6,6 +6,12 @@ out/coverage/*
 cmake-build-*/
 conan-cache/
 .install
+.cpm-cache
+CMakeCache.txt
+CMakeFiles/
+Dependencies.pdf
+empty/
+syncfs.peers
 
 # User spesific settings
 CMakeUserPresets.json

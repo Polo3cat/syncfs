@@ -1,5 +1,7 @@
 include(cmake/CPM.cmake)
 
+set(CPM_SOURCE_CACHE "${CMAKE_CURRENT_SOURCE_DIR}/.cpm-cache")
+
 # Done as a function so that updates to variables like
 # CMAKE_CXX_FLAGS don't propagate out to other
 # targets
@@ -25,7 +27,7 @@ function(myproject_setup_dependencies)
   endif()
 
   if(NOT TARGET Catch2::Catch2WithMain)
-    cpmaddpackage("gh:catchorg/Catch2@3.8.1")
+    cpmaddpackage("gh:catchorg/Catch2@3.12.0")
   endif()
 
   if(NOT TARGET CLI11::CLI11)
@@ -39,5 +41,19 @@ function(myproject_setup_dependencies)
   if(NOT TARGET tools::tools)
     cpmaddpackage("gh:lefticus/tools#update_build_system")
   endif()
+
+  cpmaddpackage(
+    NAME libzmq
+    VERSION 4.3.5
+    GITHUB_REPOSITORY "zeromq/libzmq"
+    PATCHES patches/libzmq-cmake.patch
+  )
+
+  cpmaddpackage(
+    NAME cppzmq
+    VERSION 4.11.0
+    GITHUB_REPOSITORY "zeromq/cppzmq"
+    OPTIONS "CPPZMQ_BUILD_TESTS OFF"
+  )
 
 endfunction()

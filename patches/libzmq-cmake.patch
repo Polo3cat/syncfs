@@ -1,0 +1,27 @@
+diff -u a/CMakeLists.txt b/CMakeLists.txt
+index 0346227..d8501ff 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -4,7 +4,7 @@ project(ZeroMQ)
+ if(${CMAKE_SYSTEM_NAME} STREQUAL Darwin)
+   cmake_minimum_required(VERSION 3.0.2)
+ else()
+-  cmake_minimum_required(VERSION 2.8.12)
++  cmake_minimum_required(VERSION 3.21)
+ endif()
+ 
+ include(CheckIncludeFiles)
+
+diff -u a/unittests/CMakeLists.txt b/unittests/CMakeLists.txt
+--- a/unittests/CMakeLists.txt
++++ b/unittests/CMakeLists.txt
+@@ -2,1 +2,1 @@
+-cmake_minimum_required(VERSION "2.8.1")
++cmake_minimum_required(VERSION "3.21")
+
+diff -u a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -2,1 +2,1 @@
+-cmake_minimum_required(VERSION "2.8.1")
++cmake_minimum_required(VERSION "3.21")

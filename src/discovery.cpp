@@ -10,7 +10,7 @@
 #include <vector>
 
 namespace discovery {
-auto discover(const std::filesystem::path &peers_file) -> std::vector<std::string>
+auto parse(const std::filesystem::path &peers_file) -> std::vector<std::string>
 {
     std::fstream file{ peers_file };
     static constexpr size_t max_line_len{ 512 };

@@ -5,5 +5,5 @@
 #include <vector>
 
 namespace discovery {
-[[nodiscard]] auto discover(const std::filesystem::path &peers_file) -> std::vector<std::string>;
+[[nodiscard]] auto parse(const std::filesystem::path &peers_file) -> std::vector<std::string>;
 }// namespace discovery
