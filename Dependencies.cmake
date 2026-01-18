@@ -47,6 +47,7 @@ function(myproject_setup_dependencies)
     VERSION 4.3.5
     GITHUB_REPOSITORY "zeromq/libzmq"
     PATCHES patches/libzmq-cmake.patch
+    OPTIONS "BUILD_TESTS OFF"
   )
 
   cpmaddpackage(

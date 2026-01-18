@@ -19,9 +19,11 @@ project(
   DESCRIPTION "Syncronizing file system"
   LANGUAGES CXX)
 
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
 include(cmake/PreventInSourceBuilds.cmake)
 include(ProjectOptions.cmake)
-
 
 myproject_setup_options()
 
@@ -66,8 +68,9 @@ endif()
 include(CTest)
 
 if(BUILD_TESTING)
-  message(AUTHOR_WARNING "Building Tests. Be sure to check out test/constexpr_tests.cpp for constexpr testing")
-  add_subdirectory(test)
+  include(TestDependencies.cmake)
+  setup_test_dependencies()
+  add_subdirectory(tests)
 endif()
 
 
