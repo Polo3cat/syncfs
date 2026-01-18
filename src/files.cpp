@@ -6,6 +6,7 @@
 #include <ranges>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include <files.h>
 
@@ -23,16 +24,22 @@ namespace {
 
 auto list() -> files::file_map_t
 {
-    return std::views::all(std::filesystem::recursive_directory_iterator("."))
-           | std::views::transform([](const auto &entry_it) { return std::pair(entry_it, last_write_time(entry_it)); })
-           | std::views::filter([](const auto &path_write_time) {
-                 return path_write_time.first.is_regular_file() && !path_write_time.first.is_symlink()
-                        && path_write_time.second.has_value();
-             })
-           | std::views::transform([](const auto &path_write_time) {
-                 return std::pair(path_write_time.first, path_write_time.second.value());
-             })
-           | std::ranges::to<std::map<std::filesystem::path, std::filesystem::file_time_type>>();
+    // It's necessary to materliaze die to std::view::filter caching
+    // the begin iterator. This causes a toctou failure on the value
+    // returned by last_write_time. It doesn't check that the value
+    // pointed to by the begin iterator is true with the predicate
+    // on the actual iteration. The value changes because the entry may
+    // change on disk.
+    auto entries_with_times =
+        std::views::all(std::filesystem::recursive_directory_iterator("."))
+        | std::views::transform([](const auto &entry) { return std::pair(entry, last_write_time(entry)); })
+        | std::ranges::to<std::vector>();
+
+    return entries_with_times | std::views::filter([](const auto &entry_time) {
+        return entry_time.first.is_regular_file() && !entry_time.first.is_symlink() && entry_time.second.has_value();
+    }) | std::views::transform([](const auto &entry_time) {
+        return std::pair(entry_time.first.path(), *entry_time.second);
+    }) | std::ranges::to<std::map>();
 }
 
 auto diff(const file_map_t &left, const file_map_t &right) -> file_map_t

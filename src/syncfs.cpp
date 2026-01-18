@@ -4,6 +4,8 @@
 #include <files.h>
 #include <filesystem>
 #include <format>
+#include <fstream>
+#include <ios>
 #include <iterator>
 #include <map>
 #include <print>
@@ -50,6 +52,15 @@ void receive(zmq::socket_t &s)
     if (res.has_value()) {
         std::println("Received the following {} messages", res.value());
         for (const auto &msg : recv_msgs) { std::println("{}", msg.to_string_view()); }
+        if (recv_msgs.size() == 2 || recv_msgs.size() == 3) {// Follows the protocol
+            if (recv_msgs[0].to_string_view() == "remove") {
+                std::filesystem::remove(recv_msgs[1].to_string_view());
+            } else if (recv_msgs[0].to_string_view() == "create" || recv_msgs[0].to_string_view() == "update") {
+                std::ofstream file_stream{ recv_msgs[1].to_string(),
+                    std::ios_base::out | std::ios_base::trunc | std::ios_base::binary };
+                file_stream << recv_msgs[2].to_string_view();
+            }
+        }
     }
 }
 
