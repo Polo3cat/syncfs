@@ -12,6 +12,7 @@ CMakeFiles/
 Dependencies.pdf
 empty/
 syncfs.peers
+**/__pycache__/
 
 # User spesific settings
 CMakeUserPresets.json
