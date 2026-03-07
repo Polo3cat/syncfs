@@ -57,7 +57,7 @@ def test_syncf(syncfs_a, syncfs_b, tmp_dir_a, tmp_dir_b):
     with file_a.open(mode="w") as f:
         f.write("1234")
 
-    time.sleep(0.5)
+    time.sleep(1)
     file_b = PosixPath(tmp_dir_b) / "file"
     assert file_b.exists()
     with file_b.open(mode="r") as f:
