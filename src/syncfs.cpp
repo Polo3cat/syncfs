@@ -101,6 +101,9 @@ try {
     server.set(zmq::sockopt::subscribe, "remove");
     server.set(zmq::sockopt::subscribe, "update");
 
+    std::println("Started synchronization loop listening on {}", args[2]);
+    std::println("Sinking to {}", peers);
+
     sync_loop(std::ranges::to<std::vector<sink::Sink>>(remotes), std::move(server));
 
 } catch (zmq::error_t &e) {
