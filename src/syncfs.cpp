@@ -1,3 +1,6 @@
+#include "spdlog/common.h"
+#include "spdlog/spdlog.h"
+#include <cassert>
 #include <cstdlib>
 #include <discovery.h>
 #include <exception>
@@ -12,6 +15,7 @@
 #include <ranges>
 #include <sink.h>
 #include <span>
+#include <sstream>
 #include <utility>
 #include <vector>
 #include <zmq.hpp>
@@ -50,8 +54,8 @@ void receive(zmq::socket_t &s)
     zmq::recv_result_t res = zmq::recv_multipart(s, std::back_inserter(recv_msgs), zmq::recv_flags::dontwait);
 
     if (res.has_value()) {
-        std::println("Received the following {} messages", res.value());
-        for (const auto &msg : recv_msgs) { std::println("{}", msg.to_string_view()); }
+        spdlog::debug("Received the following {} messages", res.value());
+        for (const auto &msg : recv_msgs) { spdlog::debug("{}", msg.to_string_view()); }
         if (recv_msgs.size() == 2 || recv_msgs.size() == 3) {// Follows the protocol
             if (recv_msgs[0].to_string_view() == "remove") {
                 std::filesystem::remove(recv_msgs[1].to_string_view());
@@ -88,11 +92,16 @@ try {
         std::println("<listen address> is an IPv4 address and port.");
         return EXIT_FAILURE;
     }
+
+    spdlog::set_pattern("[%Y-%m-%d %T] [%P] [%^%l%$] %v");
+    spdlog::set_level(spdlog::level::debug);
+
     auto args = std::span(argv, size_t(argc));
 
-    zmq::context_t ctx;
-
     auto peers = discovery::parse(std::filesystem::path{ args[1] });
+    assert(!peers.empty());
+
+    zmq::context_t ctx;
     auto remotes = peers | std::views::transform([&ctx](const auto &p) { return sink::Sink{ ctx, p }; });
 
     zmq::socket_t server{ ctx, zmq::socket_type::sub };
@@ -101,20 +110,24 @@ try {
     server.set(zmq::sockopt::subscribe, "remove");
     server.set(zmq::sockopt::subscribe, "update");
 
-    std::println("Started synchronization loop listening on {}", args[2]);
-    std::println("Sinking to {}", peers);
+    spdlog::info("Started synchronization loop listening on {}", args[2]);
+    {
+        std::stringstream ss;
+        for (const auto &peer : peers) { ss << ' ' << peer; }
+        spdlog::info("Sinking to{}", ss.str());
+    }
 
     sync_loop(std::ranges::to<std::vector<sink::Sink>>(remotes), std::move(server));
 
 } catch (zmq::error_t &e) {
     try {
-        std::println("{} {}", e.num(), e.what());
+        spdlog::critical("{} {}", e.num(), e.what());
     } catch (...) {
         return EXIT_FAILURE;
     }
 } catch (std::exception &e) {
     try {
-        std::println("{}", e.what());
+        spdlog::critical("{}", e.what());
     } catch (...) {
         return EXIT_FAILURE;
     }

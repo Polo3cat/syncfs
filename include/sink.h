@@ -1,11 +1,10 @@
 #pragma once
 
+#include "spdlog/spdlog.h"
 #include <filesystem>
 #include <fstream>
 #include <ios>
 #include <iterator>
-#include <print>
-
 #include <zmq.hpp>
 
 namespace sink {
@@ -40,7 +39,7 @@ struct Sink
 
     void create(const std::filesystem::path &file) const
     {
-        std::println("Add {}", file.native());
+        spdlog::debug("Add {}", file.native());
 
         static constexpr size_t buf_size = 4ULL * 1024;
         std::array<char, buf_size> file_buf;
@@ -60,7 +59,7 @@ struct Sink
     template<Pair T> void remove(const T &pair) const { remove(pair.first); }
     void remove(const std::filesystem::path &file) const
     {
-        std::println("Remove {}", file.native());
+        spdlog::debug("Remove {}", file.native());
 
         client.send(zmq::str_buffer("remove"), zmq::send_flags::sndmore);
         client.send(zmq::const_buffer(file.native().c_str(), file.native().size()));
@@ -73,7 +72,7 @@ struct Sink
     template<Pair T> void update(const T &pair) const { update(pair.first); }
     void update(const std::filesystem::path &file) const
     {
-        std::println("Update {}", file.native());
+        spdlog::debug("Update {}", file.native());
 
         static constexpr size_t buf_size = 4ULL * 1024;
         std::array<char, buf_size> file_buf;

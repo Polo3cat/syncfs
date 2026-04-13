@@ -1,3 +1,4 @@
 add_executable(syncfs syncfs.cpp files.cpp discovery.cpp)
 target_include_directories(syncfs PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(syncfs PUBLIC cppzmq)
+target_link_libraries(syncfs PRIVATE cppzmq)
+target_link_libraries(syncfs PRIVATE spdlog::spdlog)

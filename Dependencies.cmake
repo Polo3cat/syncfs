@@ -19,7 +19,7 @@ function(myproject_setup_dependencies)
       NAME
       spdlog
       VERSION
-      1.15.2
+      1.17.0
       GITHUB_REPOSITORY
       "gabime/spdlog"
       OPTIONS
