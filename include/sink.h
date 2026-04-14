@@ -1,9 +1,6 @@
 #pragma once
 
-#include "spdlog/spdlog.h"
 #include <filesystem>
-#include <fstream>
-#include <ios>
 #include <iterator>
 #include <zmq.hpp>
 
@@ -31,58 +28,36 @@ struct Sink
 
     explicit Sink(zmq::context_t &ctx, const std::string &remote) : client{ detail::init_client(ctx, remote) } {}
 
-    template<Iterable T> void create(const T &container) const
-    {
-        for (const auto &el : container) { create(el); }
-    }
-    template<Pair T> void create(const T &pair) const { create(pair.first); }
+    template<Iterable T> void create(const T &container) const;
+    template<Pair T> void create(const T &pair) const;
+    void create(const std::filesystem::path &file) const;
 
-    void create(const std::filesystem::path &file) const
-    {
-        spdlog::debug("Add {}", file.native());
+    template<Iterable T> void remove(const T &container) const;
+    template<Pair T> void remove(const T &pair) const;
+    void remove(const std::filesystem::path &file) const;
 
-        static constexpr size_t buf_size = 4ULL * 1024;
-        std::array<char, buf_size> file_buf;
-
-        auto file_stream = std::fstream{ file, std::ios_base::in | std::ios_base::binary };
-        file_stream.read(file_buf.data(), file_buf.size());
-
-        client.send(zmq::str_buffer("add"), zmq::send_flags::sndmore);
-        client.send(zmq::const_buffer(file.native().c_str(), file.native().size()), zmq::send_flags::sndmore);
-        client.send(zmq::const_buffer(file_buf.data(), file_stream.gcount()));
-    }
-
-    template<Iterable T> void remove(const T &container) const
-    {
-        for (const auto &el : container) { remove(el); }
-    }
-    template<Pair T> void remove(const T &pair) const { remove(pair.first); }
-    void remove(const std::filesystem::path &file) const
-    {
-        spdlog::debug("Remove {}", file.native());
-
-        client.send(zmq::str_buffer("remove"), zmq::send_flags::sndmore);
-        client.send(zmq::const_buffer(file.native().c_str(), file.native().size()));
-    }
-
-    template<Iterable T> void update(const T &container) const
-    {
-        for (const auto &el : container) { update(el); }
-    }
-    template<Pair T> void update(const T &pair) const { update(pair.first); }
-    void update(const std::filesystem::path &file) const
-    {
-        spdlog::debug("Update {}", file.native());
-
-        static constexpr size_t buf_size = 4ULL * 1024;
-        std::array<char, buf_size> file_buf;
-
-        auto file_stream = std::fstream{ file, std::ios_base::in | std::ios_base::binary };
-        file_stream.read(file_buf.data(), file_buf.size());
-
-        client.send(zmq::str_buffer("update"), zmq::send_flags::sndmore);
-        client.send(zmq::const_buffer(file.native().c_str(), file.native().size()), zmq::send_flags::sndmore);
-        client.send(zmq::const_buffer(file_buf.data(), file_stream.gcount()));
-    }
+    template<Iterable T> void update(const T &container) const;
+    template<Pair T> void update(const T &pair) const;
+    void update(const std::filesystem::path &file) const;
 };
+
+template<Iterable T> void Sink::create(const T &container) const
+{
+    for (const auto &el : container) { create(el); }
+}
+template<Pair T> void Sink::create(const T &pair) const { create(pair.first); }
+
+
+template<Iterable T> void Sink::remove(const T &container) const
+{
+    for (const auto &el : container) { remove(el); }
+}
+template<Pair T> void Sink::remove(const T &pair) const { remove(pair.first); }
+
+template<Iterable T> void Sink::update(const T &container) const
+{
+    for (const auto &el : container) { update(el); }
+}
+template<Pair T> void Sink::update(const T &pair) const { update(pair.first); }
+
 }// namespace sink

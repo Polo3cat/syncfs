@@ -1,5 +1,3 @@
-#include "spdlog/common.h"
-#include "spdlog/spdlog.h"
 #include <cassert>
 #include <cstdlib>
 #include <discovery.h>
@@ -15,6 +13,8 @@
 #include <ranges>
 #include <sink.h>
 #include <span>
+#include <spdlog/common.h>
+#include <spdlog/spdlog.h>
 #include <sstream>
 #include <utility>
 #include <vector>
