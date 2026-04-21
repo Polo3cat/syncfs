@@ -10,6 +10,7 @@ Checks: "*,
         -readability-identifier-length,
         -concurrency-mt-unsafe,
         -misc-no-recursion,
+        -llvm-header-guard,
 "
 WarningsAsErrors: ''
 HeaderFilterRegex: ''
