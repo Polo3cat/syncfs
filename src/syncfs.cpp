@@ -1,3 +1,4 @@
+#include <bits/chrono.h>
 #include <cassert>
 #include <cstdlib>
 #include <discovery.h>
@@ -9,6 +10,7 @@
 #include <ios>
 #include <iterator>
 #include <map>
+#include <monitor.h>
 #include <print>
 #include <ranges>
 #include <sink.h>
@@ -48,10 +50,14 @@ void send(const diff_t &diff, const std::vector<sink::Sink> &remotes)
     }
 }
 
-void receive(zmq::socket_t &s)
+void receive(zmq::poller_t<> &p)
 {
+    using namespace std::chrono_literals;
+    std::vector<zmq::poller_event<>> evs(1);
+    if (p.wait_all(evs, 100ms) == 0) { return; }
+
     std::vector<zmq::message_t> recv_msgs;
-    zmq::recv_result_t res = zmq::recv_multipart(s, std::back_inserter(recv_msgs), zmq::recv_flags::dontwait);
+    zmq::recv_result_t res = zmq::recv_multipart(evs[0].socket, std::back_inserter(recv_msgs));
 
     if (res.has_value()) {
         spdlog::debug("Received the following {} messages", res.value());
@@ -70,13 +76,19 @@ void receive(zmq::socket_t &s)
 
 void sync_loop(const std::vector<sink::Sink> &remotes, zmq::socket_t server)
 {
+    zmq::poller_t<> in_poller;
+    in_poller.add(server, zmq::event_flags::pollin);
+
+    auto const mon = monitor::Monitor();
     auto former = files::list();
-    // This obviously has to use inotify
     while (true) {
-        auto current = files::list();
-        send(create_diff(former, current), remotes);
-        former = std::move(current);
-        receive(server);
+        if (mon.wait()) {
+            mon.discard();
+            auto current = files::list();
+            send(create_diff(former, current), remotes);
+            former = std::move(current);
+        }
+        receive(in_poller);
     }
 }
 }// namespace
@@ -106,7 +118,7 @@ try {
 
     zmq::socket_t server{ ctx, zmq::socket_type::sub };
     server.bind(std::format("tcp://{}", args[2]));
-    server.set(zmq::sockopt::subscribe, "add");
+    server.set(zmq::sockopt::subscribe, "create");
     server.set(zmq::sockopt::subscribe, "remove");
     server.set(zmq::sockopt::subscribe, "update");
 

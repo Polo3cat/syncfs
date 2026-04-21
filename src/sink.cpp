@@ -12,7 +12,7 @@ namespace sink {
 
 void Sink::create(const std::filesystem::path &file) const
 {
-    spdlog::debug("Add {}", file.native());
+    spdlog::debug("Create {}", file.native());
 
     static constexpr size_t buf_size = 4ULL * 1024;
     std::array<char, buf_size> file_buf{};
@@ -20,7 +20,7 @@ void Sink::create(const std::filesystem::path &file) const
     auto file_stream = std::fstream{ file, std::ios_base::in | std::ios_base::binary };
     file_stream.read(file_buf.data(), file_buf.size());
 
-    client.send(zmq::str_buffer("add"), zmq::send_flags::sndmore);
+    client.send(zmq::str_buffer("create"), zmq::send_flags::sndmore);
     client.send(zmq::const_buffer(file.native().c_str(), file.native().size()), zmq::send_flags::sndmore);
     client.send(zmq::const_buffer(file_buf.data(), file_stream.gcount()));
 }
