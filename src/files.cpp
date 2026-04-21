@@ -4,6 +4,7 @@
 #include <iterator>
 #include <map>
 #include <ranges>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -17,6 +18,15 @@ namespace {
     {
         std::error_code err;
         const auto time = entry.last_write_time(err);
+        if (err) { return std::unexpected(err); }
+        return time;
+    }
+
+    auto last_write_time(const std::filesystem::path &p)
+        -> std::expected<std::filesystem::file_time_type, std::error_code>
+    {
+        std::error_code err;
+        const auto time = std::filesystem::last_write_time(p, err);
         if (err) { return std::unexpected(err); }
         return time;
     }
@@ -67,6 +77,14 @@ auto intersection_name(const file_map_t &left, const file_map_t &right) -> file_
             return l.first < r.first;
         });
     return intersection;
+}
+
+auto append(file_map_t &&m, std::string_view s) -> file_map_t
+{
+    std::filesystem::path p{ s };
+    auto lrt = files::last_write_time(p);
+    if (lrt.has_value()) { m.emplace(std::make_pair(std::move(p), lrt.value())); }
+    return std::move(m);
 }
 
 }// namespace files

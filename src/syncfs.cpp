@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <discovery.h>
 #include <exception>
+#include <expected>
 #include <files.h>
 #include <filesystem>
 #include <format>
@@ -18,6 +19,7 @@
 #include <spdlog/common.h>
 #include <spdlog/spdlog.h>
 #include <sstream>
+#include <string>
 #include <utility>
 #include <vector>
 #include <zmq.hpp>
@@ -50,28 +52,32 @@ void send(const diff_t &diff, const std::vector<sink::Sink> &remotes)
     }
 }
 
-void receive(zmq::poller_t<> &p)
+auto receive_ready(zmq::poller_t<> &p) -> bool
 {
     using namespace std::chrono_literals;
     std::vector<zmq::poller_event<>> evs(1);
-    if (p.wait_all(evs, 100ms) == 0) { return; }
+    return p.wait_all(evs, 100ms) != 0;
+}
 
+[[nodiscard]] auto receive(zmq::socket_t &s) -> std::expected<std::string, std::string>
+{
     std::vector<zmq::message_t> recv_msgs;
-    zmq::recv_result_t res = zmq::recv_multipart(evs[0].socket, std::back_inserter(recv_msgs));
+    zmq::recv_result_t const res = zmq::recv_multipart(s, std::back_inserter(recv_msgs));
 
-    if (res.has_value()) {
-        spdlog::debug("Received the following {} messages", res.value());
-        for (const auto &msg : recv_msgs) { spdlog::debug("{}", msg.to_string_view()); }
-        if (recv_msgs.size() == 2 || recv_msgs.size() == 3) {// Follows the protocol
-            if (recv_msgs[0].to_string_view() == "remove") {
-                std::filesystem::remove(recv_msgs[1].to_string_view());
-            } else if (recv_msgs[0].to_string_view() == "create" || recv_msgs[0].to_string_view() == "update") {
-                std::ofstream file_stream{ recv_msgs[1].to_string(),
-                    std::ios_base::out | std::ios_base::trunc | std::ios_base::binary };
-                file_stream << recv_msgs[2].to_string_view();
-            }
-        }
+    if (!res.has_value() or recv_msgs.empty()) { return std::unexpected{ "Expected to receive messages" }; }
+    if (recv_msgs.size() == 1) { return std::unexpected{ "Expected more than 1 message" }; }
+    if (recv_msgs.size() == 2 && recv_msgs[0].to_string_view() == "remove") {
+        std::filesystem::remove(recv_msgs[1].to_string_view());
+        return recv_msgs[1].to_string();
     }
+    if (recv_msgs.size() == 3
+        && (recv_msgs[0].to_string_view() == "create" || recv_msgs[0].to_string_view() == "update")) {
+        std::ofstream file_stream{ recv_msgs[1].to_string(),
+            std::ios_base::out | std::ios_base::trunc | std::ios_base::binary };
+        file_stream << recv_msgs[2].to_string_view();
+        return recv_msgs[1].to_string();
+    }
+    return std::unexpected{ "Did not receive the expected number of messages" };
 }
 
 void sync_loop(const std::vector<sink::Sink> &remotes, zmq::socket_t server)
@@ -88,7 +94,16 @@ void sync_loop(const std::vector<sink::Sink> &remotes, zmq::socket_t server)
             send(create_diff(former, current), remotes);
             former = std::move(current);
         }
-        receive(in_poller);
+        if (receive_ready(in_poller)) {
+            auto const received = receive(server);
+            if (received.has_value()) {
+                //TODO: Also consider removed files
+                spdlog::debug("Received file {}", received.value());
+                former = files::append(std::move(former), received.value());
+            } else {
+                spdlog::warn(received.error());
+            }
+        }
     }
 }
 }// namespace
