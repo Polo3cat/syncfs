@@ -83,7 +83,16 @@ auto append(file_map_t &&m, std::string_view s) -> file_map_t
 {
     std::filesystem::path p{ s };
     auto lrt = files::last_write_time(p);
-    if (lrt.has_value()) { m.emplace(std::make_pair(std::move(p), lrt.value())); }
+    if (lrt.has_value()) {
+        auto [element, was_inserted] = m.try_emplace(std::move(p), lrt.value());
+        if (!was_inserted) { element->second = lrt.value(); }
+    }
+    return std::move(m);
+}
+
+auto remove(file_map_t &&m, std::string_view s) -> file_map_t
+{
+    m.erase(s);
     return std::move(m);
 }
 

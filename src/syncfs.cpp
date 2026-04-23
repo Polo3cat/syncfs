@@ -1,5 +1,6 @@
 #include <bits/chrono.h>
 #include <cassert>
+#include <cstdint>
 #include <cstdlib>
 #include <discovery.h>
 #include <exception>
@@ -59,7 +60,9 @@ auto receive_ready(zmq::poller_t<> &p) -> bool
     return p.wait_all(evs, 100ms) != 0;
 }
 
-[[nodiscard]] auto receive(zmq::socket_t &s) -> std::expected<std::string, std::string>
+enum class Action : uint8_t { CREATE, UPDATE, REMOVE };
+
+[[nodiscard]] auto receive(zmq::socket_t &s) -> std::expected<std::pair<std::string, Action>, std::string>
 {
     std::vector<zmq::message_t> recv_msgs;
     zmq::recv_result_t const res = zmq::recv_multipart(s, std::back_inserter(recv_msgs));
@@ -68,14 +71,14 @@ auto receive_ready(zmq::poller_t<> &p) -> bool
     if (recv_msgs.size() == 1) { return std::unexpected{ "Expected more than 1 message" }; }
     if (recv_msgs.size() == 2 && recv_msgs[0].to_string_view() == "remove") {
         std::filesystem::remove(recv_msgs[1].to_string_view());
-        return recv_msgs[1].to_string();
+        return std::pair{ recv_msgs[1].to_string(), Action::REMOVE };
     }
     if (recv_msgs.size() == 3
         && (recv_msgs[0].to_string_view() == "create" || recv_msgs[0].to_string_view() == "update")) {
         std::ofstream file_stream{ recv_msgs[1].to_string(),
             std::ios_base::out | std::ios_base::trunc | std::ios_base::binary };
         file_stream << recv_msgs[2].to_string_view();
-        return recv_msgs[1].to_string();
+        return std::pair{ recv_msgs[1].to_string(), Action::CREATE };
     }
     return std::unexpected{ "Did not receive the expected number of messages" };
 }
@@ -85,24 +88,29 @@ void sync_loop(const std::vector<sink::Sink> &remotes, zmq::socket_t server)
     zmq::poller_t<> in_poller;
     in_poller.add(server, zmq::event_flags::pollin);
 
-    auto const mon = monitor::Monitor();
+    auto const file_monitor = monitor::Monitor();
     auto former = files::list();
     while (true) {
-        if (mon.wait()) {
-            mon.discard();
+        if (file_monitor.wait()) {
+            file_monitor.discard();
             auto current = files::list();
             send(create_diff(former, current), remotes);
             former = std::move(current);
         }
-        if (receive_ready(in_poller)) {
-            auto const received = receive(server);
-            if (received.has_value()) {
-                //TODO: Also consider removed files
-                spdlog::debug("Received file {}", received.value());
-                former = files::append(std::move(former), received.value());
+        if (!receive_ready(in_poller)) { continue; }
+        auto const received = receive(server);
+        if (received.has_value()) {
+            if (received.value().second == Action::REMOVE) {
+                spdlog::debug("<- Remove {}", received.value().first);
+                former = files::remove(std::move(former), received.value().first);
             } else {
-                spdlog::warn(received.error());
+                spdlog::debug("<- {} {}",
+                    received.value().second == Action::CREATE ? "Create" : "Update",
+                    received.value().first);
+                former = files::append(std::move(former), received.value().first);
             }
+        } else {
+            spdlog::warn(received.error());
         }
     }
 }

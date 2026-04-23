@@ -12,7 +12,7 @@ namespace sink {
 
 void Sink::create(const std::filesystem::path &file) const
 {
-    spdlog::debug("Create {}", file.native());
+    spdlog::debug("-> Create {}", file.native());
 
     static constexpr size_t buf_size = 4ULL * 1024;
     std::array<char, buf_size> file_buf{};
@@ -27,7 +27,7 @@ void Sink::create(const std::filesystem::path &file) const
 
 void Sink::remove(const std::filesystem::path &file) const
 {
-    spdlog::debug("Remove {}", file.native());
+    spdlog::debug("-> Remove {}", file.native());
 
     client.send(zmq::str_buffer("remove"), zmq::send_flags::sndmore);
     client.send(zmq::const_buffer(file.native().c_str(), file.native().size()));
@@ -35,7 +35,7 @@ void Sink::remove(const std::filesystem::path &file) const
 
 void Sink::update(const std::filesystem::path &file) const
 {
-    spdlog::debug("Update {}", file.native());
+    spdlog::debug("-> Update {}", file.native());
 
     static constexpr size_t buf_size = 4ULL * 1024;
     std::array<char, buf_size> file_buf{};

@@ -8,8 +8,8 @@
 
 namespace monitor {
 struct InotifyEvent{
-	uint32_t mask{};
 	std::optional<std::string> name;
+	uint32_t mask{};
 };
 
 class Monitor {

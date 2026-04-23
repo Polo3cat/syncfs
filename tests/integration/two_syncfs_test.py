@@ -68,9 +68,34 @@ def test_one_syncf_sends_to_another(syncfs_a, syncfs_b, tmp_dir_a, tmp_dir_b):
     with file_a.open(mode="w") as f:
         f.write("1234")
 
-    time.sleep(2)
+    time.sleep(1)
     file_b = PosixPath(tmp_dir_b) / "file"
     assert file_b.exists()
     with file_b.open(mode="r") as f:
         content = f.read()
         assert content == "1234"
+
+
+@pytest.fixture(scope="function")
+def file_a(tmp_dir_a):
+    file_a = PosixPath(tmp_dir_a) / "file"
+    with file_a.open(mode="w") as f:
+        f.write("1234")
+
+
+@pytest.fixture(scope="function")
+def file_b(tmp_dir_b):
+    file_a = PosixPath(tmp_dir_b) / "file"
+    with file_a.open(mode="w") as f:
+        f.write("1234")
+
+
+def test_one_syncf_deletes_another_file(
+    file_a, file_b, syncfs_a, syncfs_b, tmp_dir_a, tmp_dir_b
+):
+    file_a = PosixPath(tmp_dir_a) / "file"
+    file_a.unlink()
+
+    time.sleep(1)
+    file_b = PosixPath(tmp_dir_b) / "file"
+    assert not file_b.exists()
