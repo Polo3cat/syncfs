@@ -14,7 +14,9 @@ def num_syncfs():
 
 @pytest.fixture(scope="function")
 def tmp_dirs(num_syncfs: int):
-    dirs = [tempfile.TemporaryDirectory(prefix=f"SYNCFS{i:02}") for i in range(num_syncfs)]
+    dirs = [
+        tempfile.TemporaryDirectory(prefix=f"SYNCFS{i:02}") for i in range(num_syncfs)
+    ]
     yield [d.name for d in dirs]
     for dir_ in dirs:
         dir_.cleanup()
@@ -48,12 +50,13 @@ def syncfs(peers, addrs, tmp_dirs):
         subprocess.Popen(["syncfs", peer, addr], cwd=tmp_dir)
         for peer, addr, tmp_dir in zip(peers, addrs, tmp_dirs)
     ]
-    time.sleep(0.1)
+    time.sleep(2)
     yield
     for p in syncfss:
         p.terminate()
     for p in syncfss:
         p.wait()
+
 
 expected_sync_delay = 3
 

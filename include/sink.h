@@ -14,10 +14,10 @@ concept Pair = requires(T t) {
 };
 
 namespace detail {
-    inline auto init_client(zmq::context_t &ctx, const std::string &remote) -> zmq::socket_t
+    inline auto init_client(zmq::context_t &ctx, const std::string &addr) -> zmq::socket_t
     {
         zmq::socket_t s{ ctx, zmq::socket_type::pub };
-        s.connect(remote);
+        s.bind(addr);
         return s;
     }
 }// namespace detail
@@ -26,7 +26,7 @@ struct Sink
 {
     mutable zmq::socket_t client;
 
-    explicit Sink(zmq::context_t &ctx, const std::string &remote) : client{ detail::init_client(ctx, remote) } {}
+    explicit Sink(zmq::context_t &ctx, const std::string &addr) : client{ detail::init_client(ctx, addr) } {}
 
     template<Iterable T> void create(const T &container) const;
     template<Pair T> void create(const T &pair) const;

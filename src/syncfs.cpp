@@ -14,12 +14,10 @@
 #include <map>
 #include <monitor.h>
 #include <print>
-#include <ranges>
 #include <sink.h>
 #include <span>
 #include <spdlog/common.h>
 #include <spdlog/spdlog.h>
-#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -44,13 +42,11 @@ auto create_diff(const files::file_map_t &former, const files::file_map_t &curre
         .modified = modified };
 }
 
-void send(const diff_t &diff, const std::vector<sink::Sink> &remotes)
+void send(const diff_t &diff, const sink::Sink &server)
 {
-    for (const auto &remote : remotes) {
-        remote.remove(diff.removed);
-        remote.create(diff.created);
-        remote.update(diff.modified);
-    }
+    server.remove(diff.removed);
+    server.create(diff.created);
+    server.update(diff.modified);
 }
 
 auto receive_ready(zmq::poller_t<> &p) -> bool
@@ -83,10 +79,10 @@ enum class Action : uint8_t { CREATE, UPDATE, REMOVE };
     return std::unexpected{ "Did not receive the expected number of messages" };
 }
 
-void sync_loop(const std::vector<sink::Sink> &remotes, zmq::socket_t server)
+void sync_loop(sink::Sink server, zmq::socket_t listener)
 {
     zmq::poller_t<> in_poller;
-    in_poller.add(server, zmq::event_flags::pollin);
+    in_poller.add(listener, zmq::event_flags::pollin);
 
     auto const file_monitor = monitor::Monitor();
     auto former = files::list();
@@ -94,11 +90,11 @@ void sync_loop(const std::vector<sink::Sink> &remotes, zmq::socket_t server)
         if (file_monitor.wait()) {
             file_monitor.discard();
             auto current = files::list();
-            send(create_diff(former, current), remotes);
+            send(create_diff(former, current), server);
             former = std::move(current);
         }
         if (!receive_ready(in_poller)) { continue; }
-        auto const received = receive(server);
+        auto const received = receive(listener);
         if (received.has_value()) {
             if (received.value().second == Action::REMOVE) {
                 spdlog::debug("<- Remove {}", received.value().first);
@@ -141,22 +137,22 @@ try {
     assert(!peers.empty());
 
     zmq::context_t ctx;
-    auto remotes = peers | std::views::transform([&ctx](const auto &p) { return sink::Sink{ ctx, p }; });
 
-    zmq::socket_t server{ ctx, zmq::socket_type::sub };
-    server.bind(std::format("tcp://{}", args[2]));
-    server.set(zmq::sockopt::subscribe, "create");
-    server.set(zmq::sockopt::subscribe, "remove");
-    server.set(zmq::sockopt::subscribe, "update");
+    zmq::socket_t listener{ ctx, zmq::socket_type::sub };
+    listener.set(zmq::sockopt::subscribe, "create");
+    listener.set(zmq::sockopt::subscribe, "remove");
+    listener.set(zmq::sockopt::subscribe, "update");
 
-    spdlog::info("Started synchronization loop listening on {}", args[2]);
-    {
-        std::stringstream ss;
-        for (const auto &peer : peers) { ss << ' ' << peer; }
-        spdlog::info("Sinking to{}", ss.str());
+    for (const auto &peer : peers) {
+        listener.connect(peer);
+        spdlog::info("Subscribed to {}", peer);
     }
 
-    sync_loop(std::ranges::to<std::vector<sink::Sink>>(remotes), std::move(server));
+    spdlog::info("Publishing on {}", args[2]);
+
+    // The "sink" server does not need to be available early.
+    // ZMQ makes the actual underlying connection as needed.
+    sync_loop(sink::Sink(ctx, std::format("tcp://{}", args[2])), std::move(listener));
 
 } catch (zmq::error_t &e) {
     try {
