@@ -9,6 +9,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "pytest>=9.0.0",
+    "pytest-repeat (>=0.9.4,<0.10.0)",
 ]
 package-mode = false
 

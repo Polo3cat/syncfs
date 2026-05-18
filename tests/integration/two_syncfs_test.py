@@ -63,12 +63,15 @@ def syncfs_b(tmp_dir_b, peers_b):
             print(pb.stdout.read())
 
 
+expected_sync_delay = 0.1
+
+
 def test_one_syncf_sends_to_another(syncfs_a, syncfs_b, tmp_dir_a, tmp_dir_b):
     file_a = PosixPath(tmp_dir_a) / "file"
     with file_a.open(mode="w") as f:
         f.write("1234")
 
-    time.sleep(1)
+    time.sleep(expected_sync_delay)
     file_b = PosixPath(tmp_dir_b) / "file"
     assert file_b.exists()
     with file_b.open(mode="r") as f:
@@ -77,25 +80,34 @@ def test_one_syncf_sends_to_another(syncfs_a, syncfs_b, tmp_dir_a, tmp_dir_b):
 
 
 @pytest.fixture(scope="function")
-def file_a(tmp_dir_a):
-    file_a = PosixPath(tmp_dir_a) / "file"
-    with file_a.open(mode="w") as f:
-        f.write("1234")
+def file_a(tmp_dir_a) -> PosixPath:
+    f = PosixPath(tmp_dir_a) / "file"
+    with f.open(mode="w") as _f:
+        _f.write("1234")
+    return f
 
 
 @pytest.fixture(scope="function")
-def file_b(tmp_dir_b):
-    file_a = PosixPath(tmp_dir_b) / "file"
-    with file_a.open(mode="w") as f:
-        f.write("1234")
+def file_b(tmp_dir_b) -> PosixPath:
+    f = PosixPath(tmp_dir_b) / "file"
+    with f.open(mode="w") as _f:
+        _f.write("1234")
+    return f
 
 
 def test_one_syncf_deletes_another_file(
     file_a, file_b, syncfs_a, syncfs_b, tmp_dir_a, tmp_dir_b
 ):
-    file_a = PosixPath(tmp_dir_a) / "file"
     file_a.unlink()
 
-    time.sleep(1)
-    file_b = PosixPath(tmp_dir_b) / "file"
+    time.sleep(expected_sync_delay)
     assert not file_b.exists()
+
+
+def test_one_syncf_updates_another_file(
+    file_a, file_b, syncfs_a, syncfs_b, tmp_dir_a, tmp_dir_b
+):
+    file_a.write_text("5678")
+
+    time.sleep(expected_sync_delay)
+    assert "5678" == file_b.read_text()

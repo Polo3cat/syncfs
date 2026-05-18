@@ -105,7 +105,7 @@ void sync_loop(const std::vector<sink::Sink> &remotes, zmq::socket_t server)
                 former = files::remove(std::move(former), received.value().first);
             } else {
                 spdlog::debug("<- {} {}",
-                    received.value().second == Action::CREATE ? "Create" : "Update",
+                    (received.value().second == Action::CREATE) ? "Create" : "Update",
                     received.value().first);
                 former = files::append(std::move(former), received.value().first);
             }
@@ -127,9 +127,13 @@ try {
         std::println("<listen address> is an IPv4 address and port.");
         return EXIT_FAILURE;
     }
-
+#ifdef NDEBUG
     spdlog::set_pattern("[%Y-%m-%d %T] [%P] [%^%l%$] %v");
+    spdlog::set_level(spdlog::level::info);
+#else
+    spdlog::set_pattern("[%Y-%m-%d %T.%F] [%P] [%^%l%$] %v");
     spdlog::set_level(spdlog::level::debug);
+#endif
 
     auto args = std::span(argv, size_t(argc));
 
