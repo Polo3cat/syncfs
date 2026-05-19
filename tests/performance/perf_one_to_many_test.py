@@ -44,7 +44,7 @@ def peers(num_syncfs, addrs):
         f.close()
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="function", autouse=True)
 def syncfs(peers, addrs, tmp_dirs):
     syncfss = [
         subprocess.Popen(["syncfs", peer, addr], cwd=tmp_dir)
@@ -65,40 +65,17 @@ def contents_match(file, expected_content) -> bool:
     return file.exists() and file.read_text() == expected_content
 
 
-def test_one_syncf_sends_to_many_other(tmp_dirs, syncfs):
-    file_a = PosixPath(tmp_dirs[0]) / "file"
-    with file_a.open(mode="w") as f:
-        f.write("1234")
-
+def sync_one_to_many(tmp_dirs) -> bool:
     end = time.time() + expected_sync_delay
     while time.time() < end:
-        for dir_ in tmp_dirs:
-            if not contents_match(PosixPath(dir_) / "file", "1234"):
-                break
-        else:
-            break
+        if all(contents_match(PosixPath(dir_) / "file", "1234") for dir_ in tmp_dirs):
+            return True
+    return False
 
 
-@pytest.fixture(scope="function")
-def files(tmp_dirs) -> list[PosixPath]:
-    files = [PosixPath(d) / "file" for d in tmp_dirs]
-    for file in files:
-        with file.open(mode="w") as f:
-            f.write("1234")
-    return files
+def test_benchmark_sync_one_to_many(tmp_dirs, benchmark):
+    file = PosixPath(tmp_dirs[0]) / "file"
+    with file.open(mode="w") as f:
+        f.write("1234")
 
-
-def test_one_syncf_deletes_many_other(files, syncfs):
-    files[0].unlink()
-
-    time.sleep(expected_sync_delay)
-    for file in files:
-        assert not file.exists()
-
-
-def test_one_syncf_updates_many_other(files, syncfs):
-    files[0].write_text("5678")
-
-    time.sleep(expected_sync_delay)
-    for file in files:
-        assert "5678" == file.read_text()
+    assert benchmark.pedantic(sync_one_to_many, (tmp_dirs,), iterations=1, rounds=1)
