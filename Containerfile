@@ -1,21 +1,24 @@
 FROM fedora:44 AS build
 
-RUN dnf install -y --setopt=install_weak_deps=False \
-	cmake \
+RUN dnf install -y \
+	ccache \
 	clang \
-	lld \
-	ninja \
+	cmake \
+	cppcheck \
 	git \
+	glibc \
+	glibc-devel \
+	kernel-devel \
+	libbsd-devel \
+	lld \
+	llvm \
+	ninja \
 	patch \
 	python \
-	kernel-devel \
-	glibc-devel \
-	libbsd-devel \
+	python-devel \
 	&& dnf clean all
 
 WORKDIR syncfs
 
-RUN mkdir -p .build && \
-	cd .build && \
-	cmake .. --preset unixlike-clang-debug
-	cmake --build
+RUN cmake . --preset unixlike-clang-debug \
+	&& cmake --build .build/unixlike-clang-debug
