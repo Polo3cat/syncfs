@@ -19,6 +19,3 @@ RUN dnf install -y \
 	&& dnf clean all
 
 WORKDIR syncfs
-
-RUN cmake . --preset unixlike-clang-debug \
-	&& cmake --build .build/unixlike-clang-debug

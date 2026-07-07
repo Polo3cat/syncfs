@@ -31,7 +31,9 @@ macro(myproject_enable_cppcheck WARNINGS_AS_ERRORS CPPCHECK_OPTIONS)
           # ignores static_assert type failures
           --suppress=knownConditionTrueFalse
           --inconclusive
-          --suppress=${SUPPRESS_DIR})
+          --suppress=${SUPPRESS_DIR}
+          # makes headers cleaner
+          --suppress=funcArgNamesDifferentUnnamed)
     else()
       # if the user provides a CPPCHECK_OPTIONS with a template specified, it will override this template
       set(CMAKE_CXX_CPPCHECK ${CPPCHECK} --template=${CPPCHECK_TEMPLATE} ${CPPCHECK_OPTIONS})

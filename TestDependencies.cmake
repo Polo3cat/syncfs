@@ -3,7 +3,9 @@ function(setup_test_dependencies)
     if (NOT DEFINED Poetry_EXECUTABLE)
         message(FATAL_ERROR "Poetry command could not be installed locally")
     endif()
-    
+
+    set(ENV{POETRY_VIRTUALENVS_IN_PROJECT} true)
+
     add_custom_target(poetry-install ALL
         COMMAND ${Poetry_EXECUTABLE} install --no-root
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
