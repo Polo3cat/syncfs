@@ -15,5 +15,8 @@ config:
 test: install
 	$(PODMAN_RUN) ctest --preset test-unixlike-clang-debug
 
+test-perfomance: install
+	$(PODMAN_RUN) ctest --preset test-unixlike-clang-debug -R syncfs-performance
+
 build-image: Containerfile
 	$(PODMAN_BUILD) -t syncfs-env
