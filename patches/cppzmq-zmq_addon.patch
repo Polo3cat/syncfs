@@ -1,0 +1,14 @@
+diff --git a/zmq_addon.hpp b/zmq_addon.hpp
+index c6b4462..b306131 100644
+--- a/zmq_addon.hpp
++++ b/zmq_addon.hpp
+@@ -105,8 +105,8 @@ recv_result_t
+ recv_multipart_n(socket_ref s, OutputIt out, size_t n, recv_flags flags)
+ {
+     size_t msg_count = 0;
+-    message_t msg;
+     while (true) {
++        message_t msg;
+         if ZMQ_CONSTEXPR_IF (CheckN) {
+             if (msg_count >= n)
+                 throw std::runtime_error(

@@ -11,6 +11,7 @@ Checks: "*,
         -concurrency-mt-unsafe,
         -misc-no-recursion,
         -llvm-header-guard,
+        -llvm-prefer-static-over-anonymous-namespace,
 "
 WarningsAsErrors: ''
 HeaderFilterRegex: ''
@@ -25,3 +26,5 @@ CheckOptions:
     value: true
   - key: cppcoreguidelines-pro-type-member-init.IgnoreArrays
     value: true
+  - key: cppcoreguidelines-pro-bounds-avoid-unchecked-container-access.ExcludeClasses
+    value: ::std::map;::std::unordered_map;::std::flat_map;::std::span

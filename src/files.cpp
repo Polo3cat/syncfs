@@ -42,12 +42,12 @@ auto list() -> files::file_map_t
     // change on disk.
     auto entries_with_times =
         std::views::all(std::filesystem::recursive_directory_iterator("."))
-        | std::views::transform([](const auto &entry) { return std::pair(entry, last_write_time(entry)); })
+        | std::views::transform([](const auto &entry) -> auto { return std::pair(entry, last_write_time(entry)); })
         | std::ranges::to<std::vector>();
 
-    return entries_with_times | std::views::filter([](const auto &entry_time) {
+    return entries_with_times | std::views::filter([](const auto &entry_time) -> auto {
         return entry_time.first.is_regular_file() && !entry_time.first.is_symlink() && entry_time.second.has_value();
-    }) | std::views::transform([](const auto &entry_time) {
+    }) | std::views::transform([](const auto &entry_time) -> auto {
         return std::pair(entry_time.first.path(), *entry_time.second);
     }) | std::ranges::to<std::map>();
 }
@@ -63,7 +63,7 @@ auto diff_name(const file_map_t &left, const file_map_t &right) -> file_map_t
 {
     file_map_t diff_name;
     std::ranges::set_difference(
-        left, right, std::inserter(diff_name, diff_name.end()), [](const auto &l, const auto &r) {
+        left, right, std::inserter(diff_name, diff_name.end()), [](const auto &l, const auto &r) -> auto {
             return l.first < r.first;
         });
     return diff_name;
@@ -73,7 +73,7 @@ auto intersection_name(const file_map_t &left, const file_map_t &right) -> file_
 {
     file_map_t intersection;
     std::ranges::set_intersection(
-        left, right, std::inserter(intersection, intersection.end()), [](const auto &l, const auto &r) {
+        left, right, std::inserter(intersection, intersection.end()), [](const auto &l, const auto &r) -> auto {
             return l.first < r.first;
         });
     return intersection;

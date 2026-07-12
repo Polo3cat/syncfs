@@ -54,6 +54,7 @@ function(myproject_setup_dependencies)
     NAME cppzmq
     VERSION 4.11.0
     GITHUB_REPOSITORY "zeromq/cppzmq"
+    PATCHES patches/cppzmq-zmq_addon.patch
     OPTIONS "CPPZMQ_BUILD_TESTS OFF"
   )
 

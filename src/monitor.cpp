@@ -99,7 +99,7 @@ auto Monitor::wait() const -> bool { return _wait(fd) > 0; }
 
 auto Monitor::read() const -> std::expected<monitor::InotifyEvent, std::string>
 {
-    return _read(fd).transform([](const event_wrap &e) {
+    return _read(fd).transform([](const event_wrap &e) -> InotifyEvent {
         InotifyEvent ev{};
         ev.mask = e.ev()->mask;
         // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)

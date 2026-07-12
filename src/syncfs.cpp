@@ -1,3 +1,4 @@
+#include <array>
 #include <bits/chrono.h>
 #include <cassert>
 #include <cstdint>
@@ -10,7 +11,6 @@
 #include <format>
 #include <fstream>
 #include <ios>
-#include <iterator>
 #include <map>
 #include <monitor.h>
 #include <print>
@@ -18,6 +18,7 @@
 #include <span>
 #include <spdlog/common.h>
 #include <spdlog/spdlog.h>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -60,21 +61,34 @@ enum class Action : uint8_t { CREATE, UPDATE, REMOVE };
 
 [[nodiscard]] auto receive(zmq::socket_t &s) -> std::expected<std::pair<std::string, Action>, std::string>
 {
-    std::vector<zmq::message_t> recv_msgs;
-    zmq::recv_result_t const res = zmq::recv_multipart(s, std::back_inserter(recv_msgs));
-
-    if (!res.has_value() or recv_msgs.empty()) { return std::unexpected{ "Expected to receive messages" }; }
-    if (recv_msgs.size() == 1) { return std::unexpected{ "Expected more than 1 message" }; }
-    if (recv_msgs.size() == 2 && recv_msgs[0].to_string_view() == "remove") {
-        std::filesystem::remove(recv_msgs[1].to_string_view());
-        return std::pair{ recv_msgs[1].to_string(), Action::REMOVE };
+    std::array<zmq::message_t, 3> recv_msgs{};
+    zmq::recv_result_t res{};
+    try {
+        res = zmq::recv_multipart_n(s, recv_msgs.begin(), recv_msgs.size());
+    } catch (std::runtime_error& e) {
+        return std::unexpected{ "Did not receive the expected number of messages" };
     }
-    if (recv_msgs.size() == 3
-        && (recv_msgs[0].to_string_view() == "create" || recv_msgs[0].to_string_view() == "update")) {
-        std::ofstream file_stream{ recv_msgs[1].to_string(),
-            std::ios_base::out | std::ios_base::trunc | std::ios_base::binary };
-        file_stream << recv_msgs[2].to_string_view();
-        return std::pair{ recv_msgs[1].to_string(), Action::CREATE };
+
+    if (!res.has_value()) { return std::unexpected{ "Expected to receive messages" }; }
+    switch (res.value()) {
+    case 1:
+        return std::unexpected{ "Expected more than 1 message" };
+    case 2:
+        if (recv_msgs.at(0).to_string_view() == "remove") {
+            std::filesystem::remove(recv_msgs.at(1).to_string_view());
+            return std::pair{ recv_msgs.at(1).to_string(), Action::REMOVE };
+        }
+        break;
+    case 3:
+        if (recv_msgs.at(0).to_string_view() == "create" || recv_msgs.at(0).to_string_view() == "update") {
+            std::ofstream file_stream{ recv_msgs.at(1).to_string(),
+                std::ios_base::out | std::ios_base::trunc | std::ios_base::binary };
+            file_stream << recv_msgs.at(2).to_string_view();
+            return std::pair{ recv_msgs.at(1).to_string(), Action::CREATE };
+        }
+        break;
+    default:
+        break;
     }
     return std::unexpected{ "Did not receive the expected number of messages" };
 }
@@ -114,7 +128,8 @@ void sync_loop(sink::Sink server, zmq::socket_t listener)
 
 auto main(int argc, char *argv[]) -> int
 try {
-    if (argc < 3) {
+    auto args = std::span(argv, static_cast<size_t>(argc));
+    if (args.size() < 3) {
         std::println("Usage: syncf <peers file> <listen address>");
         std::println();
         std::println("Synchronizes the working directory with <peers file>");
@@ -130,8 +145,6 @@ try {
     spdlog::set_pattern("[%Y-%m-%d %T.%F] [%P] [%^%l%$] %v");
     spdlog::set_level(spdlog::level::debug);
 #endif
-
-    auto args = std::span(argv, size_t(argc));
 
     auto peers = discovery::parse(std::filesystem::path{ args[1] });
     assert(!peers.empty());
