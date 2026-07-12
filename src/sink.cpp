@@ -1,9 +1,13 @@
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <ios>
+#include <libtorrent/create_torrent.hpp>
 #include <spdlog/spdlog.h>
+#include <system_error>
+#include <vector>
 #include <zmq.hpp>
 
 #include "sink.h"
@@ -12,6 +16,18 @@ namespace sink {
 
 void Sink::create(const std::filesystem::path &file) const {
   spdlog::debug("-> Create {}", file.native());
+
+  std::error_code err{};
+  const std::filesystem::directory_entry entry(file, err);
+  if (err) {
+    spdlog::error("Failed to send create for file {}. {} {}", file.c_str(),
+                  err.value(), err.message());
+    return;
+  }
+
+  lt::create_torrent torrent(std::vector{
+      lt::create_file_entry{file, static_cast<int64_t>(entry.file_size())}});
+  torrent.add_node(addr);
 
   static constexpr size_t buf_size = 4ULL * 1024;
   std::array<char, buf_size> file_buf{};

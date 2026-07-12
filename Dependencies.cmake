@@ -58,4 +58,19 @@ function(myproject_setup_dependencies)
     OPTIONS "CPPZMQ_BUILD_TESTS OFF"
   )
 
+  cpmaddpackage(
+    NAME Boost 
+    VERSION 1.91.0,
+    URL https://github.com/boostorg/boost/releases/download/boost-1.91.0-1/boost-1.91.0-1-cmake.tar.xz
+    URL_HASH SHA256=cc5dc5006ecbdf0051f90979be31b4eee5987d9ae14ae9fb9c03cfa43fa3cdad
+    OPTIONS "BOOST_ENABLE_CMAKE ON" "BOOST_LOCALE_ENABLE_ICU OFF" "BOOST_SKIP_INSTALL_RULES OFF" "BOOST_ENABLE_COMPATIBILITY_TARGETS ON"
+    EXCLUDE_FROM_ALL
+  )
+
+  find_package(Boost REQUIRED COMPONENTS json)
+
+  cpmaddpackage("gh:arvidn/libtorrent@2.1.0")
+  # I'm too lazy to patch libtorrent
+  target_link_libraries(torrent-rasterbar PUBLIC Boost::json)
+
 endfunction()
