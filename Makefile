@@ -3,6 +3,9 @@
 PODMAN_RUN = podman run -v $$(pwd):/syncfs:rw,Z -v $$HOME/.cache/ccache:/root/.cache/ccache:rw,Z localhost/syncfs-env
 PODMAN_BUILD = podman build -f Containerfile -v $$(pwd):/syncfs:rw,Z -v $$HOME/.cache/ccache:/root/.cache/ccache:rw,Z
 
+install: build
+	$(PODMAN_RUN) cmake --install .build/unixlike-clang-debug
+
 files:
 	find src include tests -name *.h -o -name *.cpp > .build/clang-format-files
 
@@ -11,9 +14,6 @@ dry-format: files
 
 format: files
 	$(PODMAN_RUN) clang-format -Werror --files=.build/clang-format-files -i
-
-install: build
-	$(PODMAN_RUN) cmake --install .build/unixlike-clang-debug
 
 build: config dry-format
 	$(PODMAN_RUN) cmake --build .build/unixlike-clang-debug
