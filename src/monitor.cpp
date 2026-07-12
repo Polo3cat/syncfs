@@ -108,10 +108,9 @@ auto Monitor::read() const
   return _read(fd).transform([](const event_wrap &e) -> InotifyEvent {
     InotifyEvent ev{};
     ev.mask = e.ev()->mask;
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
-    ev.name = e.ev()->len == 0
-                  ? std::nullopt
-                  : std::make_optional(std::string{e.ev()->name, e.ev()->len});
+    ev.name = e.ev()->len == 0 ? std::nullopt
+                               : std::make_optional(std::string{
+                                     static_cast<const char *>(e.ev()->name)});
     return ev;
   });
   /*
