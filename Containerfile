@@ -12,6 +12,7 @@ RUN dnf install -y \
 	kernel-devel \
 	libbsd-devel \
 	lld \
+	lldb \
 	llvm \
 	ninja \
 	patch \

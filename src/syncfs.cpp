@@ -21,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <utils.h>
 #include <vector>
 #include <zmq.hpp>
 #include <zmq_addon.hpp>
@@ -127,6 +128,12 @@ void sync_loop(sink::Sink server, zmq::socket_t listener) {
     }
   }
 }
+
+auto pub_socket(zmq::context_t &ctx, const std::string &addr) -> zmq::socket_t {
+  zmq::socket_t s{ctx, zmq::socket_type::pub};
+  s.bind(addr);
+  return s;
+}
 } // namespace
 
 auto main(int argc, char *argv[]) -> int try {
@@ -167,7 +174,8 @@ auto main(int argc, char *argv[]) -> int try {
 
   // The "sink" server does not need to be available early.
   // ZMQ makes the actual underlying connection as needed.
-  sync_loop(sink::Sink(ctx, std::format("tcp://{}", args[2])),
+  auto client = pub_socket(ctx, std::format("tcp://{}", args[2]));
+  sync_loop(sink::Sink(std::move(client), utils::parse_host_port(args[2])),
             std::move(listener));
 
 } catch (zmq::error_t &e) {

@@ -17,7 +17,8 @@ struct Sink {
   mutable zmq::socket_t client;
   std::pair<std::string, int> addr;
 
-  explicit Sink(zmq::context_t &ctx, const std::string &addr);
+  explicit Sink(zmq::socket_t &&client, const std::pair<std::string, int> &addr)
+      : client{std::move(client)}, addr{addr} {}
 
   template <Iterable T> void create(const T &container) const;
   template <Pair T> void create(const T &pair) const;

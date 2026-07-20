@@ -9,9 +9,6 @@ install: build
 build-test:
 	$(PODMAN_RUN) cmake --build .build/unixlike-clang-debug -t poetry-install
 
-build-sink:
-	$(PODMAN_RUN) cmake --build .build/unixlike-clang-debug -t sink
-
 files:
 	find src include tests -name *.h -o -name *.cpp > .build/clang-format-files
 
@@ -32,6 +29,9 @@ test: build-test install
 
 test-perfomance: install
 	$(PODMAN_RUN) ctest --preset test-unixlike-clang-debug -R syncfs-performance
+
+test-unit:
+	$(PODMAN_RUN) ctest --preset test-unixlike-clang-debug -R .*unit
 
 build-image: Containerfile
 	$(PODMAN_BUILD) -t syncfs-env

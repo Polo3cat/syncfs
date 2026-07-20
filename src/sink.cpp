@@ -1,5 +1,4 @@
 #include <array>
-#include <boost/algorithm/string/split.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -7,7 +6,6 @@
 #include <ios>
 #include <libtorrent/create_torrent.hpp>
 #include <spdlog/spdlog.h>
-#include <string>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -16,25 +14,6 @@
 #include "sink.h"
 
 namespace sink {
-
-namespace {
-auto init_client(zmq::context_t &ctx, const std::string &addr)
-    -> zmq::socket_t {
-  zmq::socket_t s{ctx, zmq::socket_type::pub};
-  s.bind(addr);
-  return s;
-}
-
-auto parse_host_port(const std::string &s) -> std::pair<std::string, int> {
-  std::vector<std::string> tokens;
-  boost::algorithm::split(tokens, s, [](char c) -> bool { return c == ':'; });
-  return {tokens.at(0), std::stoi(tokens.at(1))};
-}
-} // namespace
-
-Sink::Sink(zmq::context_t &ctx, const std::string &addr)
-    : client{init_client(ctx, addr)}, addr{parse_host_port(addr)} {}
-
 void Sink::create(const std::filesystem::path &file) const {
   spdlog::debug("-> Create {}", file.native());
 

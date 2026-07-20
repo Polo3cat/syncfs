@@ -1,12 +1,16 @@
 add_library(sink STATIC sink.cpp)
 target_include_directories(sink PUBLIC ${CMAKE_SOURCE_DIR}/include/sink)
 target_link_libraries(sink PUBLIC cppzmq)
-target_link_libraries(sink PRIVATE Boost::boost)
 target_link_libraries(sink PRIVATE spdlog::spdlog)
 target_link_libraries(sink PRIVATE torrent-rasterbar)
+
+add_library(utils STATIC utils.cpp)
+target_include_directories(utils PUBLIC ${CMAKE_SOURCE_DIR}/include/utils)
+target_link_libraries(utils PRIVATE Boost::algorithm)
 
 add_executable(syncfs syncfs.cpp files.cpp discovery.cpp monitor.cpp)
 target_include_directories(syncfs PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(syncfs PRIVATE sink)
+target_link_libraries(syncfs PRIVATE utils)
 target_link_libraries(syncfs PRIVATE cppzmq)
 target_link_libraries(syncfs PRIVATE spdlog::spdlog)
