@@ -28,18 +28,10 @@ void Sink::create(const std::filesystem::path &file) const {
   lt::create_torrent torrent(std::vector{
       lt::create_file_entry{file, static_cast<int64_t>(entry.file_size())}});
   torrent.add_node(addr);
-
-  static constexpr size_t buf_size = 4ULL * 1024;
-  std::array<char, buf_size> file_buf{};
-
-  auto file_stream =
-      std::fstream{file, std::ios_base::in | std::ios_base::binary};
-  file_stream.read(file_buf.data(), file_buf.size());
+  auto bencoded_torrent = torrent.generate_buf();
 
   client.send(zmq::str_buffer("create"), zmq::send_flags::sndmore);
-  client.send(zmq::const_buffer(file.native().c_str(), file.native().size()),
-              zmq::send_flags::sndmore);
-  client.send(zmq::const_buffer(file_buf.data(), file_stream.gcount()));
+  client.send(zmq::const_buffer(bencoded_torrent.data(), bencoded_torrent.size()));
 }
 
 void Sink::remove(const std::filesystem::path &file) const {
