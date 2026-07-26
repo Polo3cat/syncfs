@@ -4,13 +4,22 @@ target_link_libraries(source PUBLIC cppzmq)
 target_link_libraries(source PRIVATE spdlog::spdlog)
 target_link_libraries(source PRIVATE torrent-rasterbar)
 
+add_library(sink STATIC sink.cpp)
+target_include_directories(sink PUBLIC ${CMAKE_SOURCE_DIR}/include/sink)
+target_link_libraries(sink PRIVATE cppzmq)
+
 add_library(utils STATIC utils.cpp)
 target_include_directories(utils PUBLIC ${CMAKE_SOURCE_DIR}/include/utils)
 target_link_libraries(utils PRIVATE Boost::algorithm)
 
+add_library(protocol INTERFACE)
+target_include_directories(protocol INTERFACE ${CMAKE_SOURCE_DIR}/include/protocol)
+
 add_executable(syncfs syncfs.cpp files.cpp discovery.cpp monitor.cpp)
 target_include_directories(syncfs PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(syncfs PRIVATE protocol)
 target_link_libraries(syncfs PRIVATE source)
+target_link_libraries(syncfs PRIVATE sink)
 target_link_libraries(syncfs PRIVATE utils)
 target_link_libraries(syncfs PRIVATE cppzmq)
 target_link_libraries(syncfs PRIVATE spdlog::spdlog)

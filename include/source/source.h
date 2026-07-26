@@ -28,10 +28,6 @@ struct Source {
   template <Iterable T> void remove(const T &container) const;
   template <Pair T> void remove(const T &pair) const;
   void remove(const std::filesystem::path &file) const;
-
-  template <Iterable T> void update(const T &container) const;
-  template <Pair T> void update(const T &pair) const;
-  void update(const std::filesystem::path &file) const;
 };
 
 template <Iterable T> void Source::create(const T &container) const {
@@ -51,14 +47,4 @@ template <Iterable T> void Source::remove(const T &container) const {
 template <Pair T> void Source::remove(const T &pair) const {
   remove(pair.first);
 }
-
-template <Iterable T> void Source::update(const T &container) const {
-  for (const auto &el : container) {
-    update(el);
-  }
-}
-template <Pair T> void Source::update(const T &pair) const {
-  update(pair.first);
-}
-
 } // namespace source

@@ -1,9 +1,5 @@
-#include <array>
-#include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
-#include <ios>
 #include <libtorrent/create_torrent.hpp>
 #include <spdlog/spdlog.h>
 #include <system_error>
@@ -43,21 +39,5 @@ void Source::remove(const std::filesystem::path &file) const {
 
   client.send(zmq::str_buffer("remove"), zmq::send_flags::sndmore);
   client.send(zmq::const_buffer(file.native().c_str(), file.native().size()));
-}
-
-void Source::update(const std::filesystem::path &file) const {
-  spdlog::debug("-> Update {}", file.native());
-
-  static constexpr size_t buf_size = 4ULL * 1024;
-  std::array<char, buf_size> file_buf{};
-
-  auto file_stream =
-      std::fstream{file, std::ios_base::in | std::ios_base::binary};
-  file_stream.read(file_buf.data(), file_buf.size());
-
-  client.send(zmq::str_buffer("update"), zmq::send_flags::sndmore);
-  client.send(zmq::const_buffer(file.native().c_str(), file.native().size()),
-              zmq::send_flags::sndmore);
-  client.send(zmq::const_buffer(file_buf.data(), file_stream.gcount()));
 }
 } // namespace source

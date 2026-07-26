@@ -1,30 +1,26 @@
-#include <array>
-#include <bits/chrono.h>
 #include <cassert>
-#include <cstdint>
 #include <cstdlib>
-#include <discovery.h>
 #include <exception>
 #include <expected>
-#include <files.h>
 #include <filesystem>
 #include <format>
-#include <fstream>
-#include <ios>
 #include <map>
-#include <monitor.h>
 #include <print>
-#include <source.h>
 #include <span>
 #include <spdlog/common.h>
 #include <spdlog/spdlog.h>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <utils.h>
 #include <vector>
 #include <zmq.hpp>
-#include <zmq_addon.hpp>
+
+#include <discovery.h>
+#include <files.h>
+#include <monitor.h>
+#include <protocol.h>
+#include <sink.h>
+#include <source.h>
 
 namespace {
 struct diff_t {
@@ -46,59 +42,10 @@ auto create_diff(const files::file_map_t &former,
 void send(const diff_t &diff, const source::Source &server) {
   server.remove(diff.removed);
   server.create(diff.created);
-  server.update(diff.modified);
+  server.create(diff.modified);
 }
 
-auto receive_ready(zmq::poller_t<> &p) -> bool {
-  using namespace std::chrono_literals;
-  std::vector<zmq::poller_event<>> evs(1);
-  return p.wait_all(evs, 100ms) != 0;
-}
-
-enum class Action : uint8_t { CREATE, UPDATE, REMOVE };
-
-[[nodiscard]] auto receive(zmq::socket_t &s)
-    -> std::expected<std::pair<std::string, Action>, std::string> {
-  std::array<zmq::message_t, 3> recv_msgs{};
-  zmq::recv_result_t res{};
-  try {
-    res = zmq::recv_multipart_n(s, recv_msgs.begin(), recv_msgs.size());
-  } catch (std::runtime_error &e) {
-    return std::unexpected{"Did not receive the expected number of messages"};
-  }
-
-  if (!res.has_value()) {
-    return std::unexpected{"Expected to receive messages"};
-  }
-  switch (res.value()) {
-  case 1:
-    return std::unexpected{"Expected more than 1 message"};
-  case 2:
-    if (recv_msgs.at(0).to_string_view() == "remove") {
-      std::filesystem::remove(recv_msgs.at(1).to_string_view());
-      return std::pair{recv_msgs.at(1).to_string(), Action::REMOVE};
-    }
-    break;
-  case 3:
-    if (recv_msgs.at(0).to_string_view() == "create" ||
-        recv_msgs.at(0).to_string_view() == "update") {
-      std::ofstream file_stream{recv_msgs.at(1).to_string(),
-                                std::ios_base::out | std::ios_base::trunc |
-                                    std::ios_base::binary};
-      file_stream << recv_msgs.at(2).to_string_view();
-      return std::pair{recv_msgs.at(1).to_string(), Action::CREATE};
-    }
-    break;
-  default:
-    break;
-  }
-  return std::unexpected{"Did not receive the expected number of messages"};
-}
-
-void sync_loop(source::Source server, zmq::socket_t listener) {
-  zmq::poller_t<> in_poller;
-  in_poller.add(listener, zmq::event_flags::pollin);
-
+void sync_loop(const source::Source &server, sink::Sink listener) {
   auto const file_monitor = monitor::Monitor();
   auto former = files::list();
   while (true) {
@@ -108,23 +55,19 @@ void sync_loop(source::Source server, zmq::socket_t listener) {
       send(create_diff(former, current), server);
       former = std::move(current);
     }
-    if (!receive_ready(in_poller)) {
+    if (!listener.receive_ready()) {
       continue;
     }
-    auto const received = receive(listener);
-    if (received.has_value()) {
-      if (received.value().second == Action::REMOVE) {
-        spdlog::debug("<- Remove {}", received.value().first);
-        former = files::remove(std::move(former), received.value().first);
-      } else {
-        spdlog::debug("<- {} {}",
-                      (received.value().second == Action::CREATE) ? "Create"
-                                                                  : "Update",
-                      received.value().first);
-        former = files::append(std::move(former), received.value().first);
-      }
-    } else {
+    auto const received = listener.receive(protocol::length);
+    if (!received.has_value()) {
       spdlog::warn(received.error());
+      continue;
+    }
+    auto r = protocol::act(received.value());
+    if (!r.has_value()) {
+      spdlog::warn(r.error());
+    } else {
+      spdlog::info(r.value());
     }
   }
 }
@@ -161,22 +104,25 @@ auto main(int argc, char *argv[]) -> int try {
   zmq::context_t ctx;
 
   zmq::socket_t listener{ctx, zmq::socket_type::sub};
-  listener.set(zmq::sockopt::subscribe, "create");
-  listener.set(zmq::sockopt::subscribe, "remove");
-  listener.set(zmq::sockopt::subscribe, "update");
+  protocol::subscribe(listener);
 
   for (const auto &peer : peers) {
     listener.connect(peer);
     spdlog::info("Subscribed to {}", peer);
   }
 
-  spdlog::info("Publishing on {}", args[2]);
+  const auto my_address = std::format("tcp://{}", args[2]);
+  listener.connect(my_address);
+  spdlog::info("Subscribed to {} (myself)", my_address);
 
   // The "source" server does not need to be available early.
   // ZMQ makes the actual underlying connection as needed.
-  auto client = pub_socket(ctx, std::format("tcp://{}", args[2]));
+  zmq::socket_t client{ctx, zmq::socket_type::pub};
+  client.bind(my_address);
+  spdlog::info("Publishing on {}", args[2]);
+
   sync_loop(source::Source(std::move(client), utils::parse_host_port(args[2])),
-            std::move(listener));
+            sink::Sink(std::move(listener)));
 
 } catch (zmq::error_t &e) {
   try {
