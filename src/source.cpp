@@ -11,10 +11,10 @@
 #include <vector>
 #include <zmq.hpp>
 
-#include "sink.h"
+#include "source.h"
 
-namespace sink {
-void Sink::create(const std::filesystem::path &file) const {
+namespace source {
+void Source::create(const std::filesystem::path &file) const {
   spdlog::debug("-> Create {}", file.native());
 
   std::error_code err{};
@@ -38,14 +38,14 @@ void Sink::create(const std::filesystem::path &file) const {
       zmq::const_buffer(bencoded_torrent.data(), bencoded_torrent.size()));
 }
 
-void Sink::remove(const std::filesystem::path &file) const {
+void Source::remove(const std::filesystem::path &file) const {
   spdlog::debug("-> Remove {}", file.native());
 
   client.send(zmq::str_buffer("remove"), zmq::send_flags::sndmore);
   client.send(zmq::const_buffer(file.native().c_str(), file.native().size()));
 }
 
-void Sink::update(const std::filesystem::path &file) const {
+void Source::update(const std::filesystem::path &file) const {
   spdlog::debug("-> Update {}", file.native());
 
   static constexpr size_t buf_size = 4ULL * 1024;
@@ -60,4 +60,4 @@ void Sink::update(const std::filesystem::path &file) const {
               zmq::send_flags::sndmore);
   client.send(zmq::const_buffer(file_buf.data(), file_stream.gcount()));
 }
-} // namespace sink
+} // namespace source

@@ -5,7 +5,7 @@
 #include <gtest/gtest.h>
 #include <libtorrent/entry.hpp>
 #include <libtorrent/load_torrent.hpp>
-#include <sink.h>
+#include <source.h>
 #include <zmq.hpp>
 #include <zmq_addon.hpp>
 
@@ -40,8 +40,9 @@ TEST_F(TempFile, CreateSendsTorrent) {
   zmq::context_t ctx;
   zmq::socket_t s{ctx, zmq::socket_type::pub};
   s.bind("tcp://127.0.0.1:3000");
-  constexpr auto sink_address = 3000;
-  auto sender = sink::Sink(std::move(s), std::pair{"127.0.0.1", sink_address});
+  constexpr auto source_address = 3000;
+  auto sender =
+      source::Source(std::move(s), std::pair{"127.0.0.1", source_address});
 
   zmq::context_t ctx2;
   zmq::socket_t receiver{ctx2, zmq::socket_type::sub};
@@ -61,8 +62,13 @@ TEST_F(TempFile, CreateSendsTorrent) {
 
   // Assertions on the torrent file
   auto torrent = lt::load_torrent_buffer(recv_msgs.at(1).to_string_view());
-  ASSERT_EQ(1, torrent.ti->num_files());
+  ASSERT_EQ(torrent.ti->num_files(), 1);
+
   auto file_index = *(torrent.ti->layout().file_range().begin());
-  auto file_name = torrent.ti->layout().file_name(file_index);
+  const auto &layout = torrent.ti->layout();
+  auto file_name = layout.file_name(file_index);
+
+  ASSERT_FALSE(layout.file_absolute_path(file_index));
   ASSERT_EQ(file_name, "important_file");
+  ASSERT_EQ(layout.file_path(file_index, "."), "tmp/important_file");
 }

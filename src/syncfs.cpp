@@ -14,7 +14,7 @@
 #include <map>
 #include <monitor.h>
 #include <print>
-#include <sink.h>
+#include <source.h>
 #include <span>
 #include <spdlog/common.h>
 #include <spdlog/spdlog.h>
@@ -43,7 +43,7 @@ auto create_diff(const files::file_map_t &former,
                 .modified = modified};
 }
 
-void send(const diff_t &diff, const sink::Sink &server) {
+void send(const diff_t &diff, const source::Source &server) {
   server.remove(diff.removed);
   server.create(diff.created);
   server.update(diff.modified);
@@ -95,7 +95,7 @@ enum class Action : uint8_t { CREATE, UPDATE, REMOVE };
   return std::unexpected{"Did not receive the expected number of messages"};
 }
 
-void sync_loop(sink::Sink server, zmq::socket_t listener) {
+void sync_loop(source::Source server, zmq::socket_t listener) {
   zmq::poller_t<> in_poller;
   in_poller.add(listener, zmq::event_flags::pollin);
 
@@ -172,10 +172,10 @@ auto main(int argc, char *argv[]) -> int try {
 
   spdlog::info("Publishing on {}", args[2]);
 
-  // The "sink" server does not need to be available early.
+  // The "source" server does not need to be available early.
   // ZMQ makes the actual underlying connection as needed.
   auto client = pub_socket(ctx, std::format("tcp://{}", args[2]));
-  sync_loop(sink::Sink(std::move(client), utils::parse_host_port(args[2])),
+  sync_loop(source::Source(std::move(client), utils::parse_host_port(args[2])),
             std::move(listener));
 
 } catch (zmq::error_t &e) {

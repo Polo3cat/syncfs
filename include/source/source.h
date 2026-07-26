@@ -4,7 +4,7 @@
 #include <iterator>
 #include <zmq.hpp>
 
-namespace sink {
+namespace source {
 template <typename T>
 concept Iterable = requires(T t) { std::begin(t); };
 template <typename T>
@@ -13,11 +13,12 @@ concept Pair = requires(T t) {
   t.second;
 };
 
-struct Sink {
+struct Source {
   mutable zmq::socket_t client;
   std::pair<std::string, int> addr;
 
-  explicit Sink(zmq::socket_t &&client, const std::pair<std::string, int> &addr)
+  explicit Source(zmq::socket_t &&client,
+                  const std::pair<std::string, int> &addr)
       : client{std::move(client)}, addr{addr} {}
 
   template <Iterable T> void create(const T &container) const;
@@ -33,25 +34,31 @@ struct Sink {
   void update(const std::filesystem::path &file) const;
 };
 
-template <Iterable T> void Sink::create(const T &container) const {
+template <Iterable T> void Source::create(const T &container) const {
   for (const auto &el : container) {
     create(el);
   }
 }
-template <Pair T> void Sink::create(const T &pair) const { create(pair.first); }
+template <Pair T> void Source::create(const T &pair) const {
+  create(pair.first);
+}
 
-template <Iterable T> void Sink::remove(const T &container) const {
+template <Iterable T> void Source::remove(const T &container) const {
   for (const auto &el : container) {
     remove(el);
   }
 }
-template <Pair T> void Sink::remove(const T &pair) const { remove(pair.first); }
+template <Pair T> void Source::remove(const T &pair) const {
+  remove(pair.first);
+}
 
-template <Iterable T> void Sink::update(const T &container) const {
+template <Iterable T> void Source::update(const T &container) const {
   for (const auto &el : container) {
     update(el);
   }
 }
-template <Pair T> void Sink::update(const T &pair) const { update(pair.first); }
+template <Pair T> void Source::update(const T &pair) const {
+  update(pair.first);
+}
 
-} // namespace sink
+} // namespace source
