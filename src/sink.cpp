@@ -25,13 +25,17 @@ void Sink::create(const std::filesystem::path &file) const {
     return;
   }
 
-  lt::create_torrent torrent(std::vector{
-      lt::create_file_entry{file, static_cast<int64_t>(entry.file_size())}});
+  auto file_entry =
+      lt::create_file_entry{file, static_cast<int64_t>(entry.file_size())};
+  lt::create_torrent torrent(std::vector{std::move(file_entry)});
   torrent.add_node(addr);
+  // Expensive operation. Reads disk and hashes the file contents.
+  lt::set_piece_hashes(torrent, file.parent_path());
   auto bencoded_torrent = torrent.generate_buf();
 
   client.send(zmq::str_buffer("create"), zmq::send_flags::sndmore);
-  client.send(zmq::const_buffer(bencoded_torrent.data(), bencoded_torrent.size()));
+  client.send(
+      zmq::const_buffer(bencoded_torrent.data(), bencoded_torrent.size()));
 }
 
 void Sink::remove(const std::filesystem::path &file) const {
