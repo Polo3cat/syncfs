@@ -24,10 +24,10 @@ build: config dry-format
 config:
 	$(PODMAN_RUN) cmake --preset unixlike-clang-debug
 
-test: build-test install
+test:
 	$(PODMAN_RUN) ctest --preset test-unixlike-clang-debug
 
-test-perfomance: install
+test-perfomance:
 	$(PODMAN_RUN) ctest --preset test-unixlike-clang-debug -R syncfs-performance
 
 test-unit:

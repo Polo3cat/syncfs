@@ -4,6 +4,7 @@
 #include <expected>
 #include <filesystem>
 #include <format>
+#include <libtorrent/session.hpp>
 #include <map>
 #include <print>
 #include <span>
@@ -48,6 +49,7 @@ void send(const diff_t &diff, const source::Source &server) {
 void sync_loop(const source::Source &server, sink::Sink listener) {
   auto const file_monitor = monitor::Monitor();
   auto former = files::list();
+  lt::session session;
   while (true) {
     if (file_monitor.wait()) {
       file_monitor.discard();
@@ -63,7 +65,7 @@ void sync_loop(const source::Source &server, sink::Sink listener) {
       spdlog::warn(received.error());
       continue;
     }
-    auto r = protocol::act(received.value());
+    auto r = protocol::act(received.value(), session);
     if (!r.has_value()) {
       spdlog::warn(r.error());
     } else {
