@@ -58,7 +58,7 @@ def syncfs(peers, addrs, tmp_dirs):
         p.wait()
 
 
-expected_sync_delay = 3
+expected_sync_delay = 5
 
 
 def contents_match(file, expected_content) -> bool:

@@ -21,8 +21,8 @@ void Source::create(const std::filesystem::path &file) const {
     return;
   }
 
-  auto file_entry =
-      lt::create_file_entry{file, static_cast<int64_t>(entry.file_size())};
+  auto file_entry = lt::create_file_entry{
+      file.lexically_normal(), static_cast<int64_t>(entry.file_size())};
   lt::create_torrent torrent(std::vector{std::move(file_entry)});
   torrent.add_node(addr);
   // Expensive operation. Reads disk and hashes the file contents.
