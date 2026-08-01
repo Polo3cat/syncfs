@@ -4,7 +4,6 @@
 #include <expected>
 #include <filesystem>
 #include <format>
-#include <libtorrent/session.hpp>
 #include <map>
 #include <print>
 #include <span>
@@ -15,6 +14,8 @@
 #include <utils.h>
 #include <vector>
 #include <zmq.hpp>
+
+#include <libtorrent/session.hpp>
 
 #include <discovery.h>
 #include <files.h>

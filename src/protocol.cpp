@@ -1,15 +1,27 @@
 #include <expected>
 #include <filesystem>
 #include <format>
+#include <memory>
 #include <string>
-#include <utility>
+#include <string_view>
 #include <vector>
 
 #include <libtorrent/load_torrent.hpp>
 #include <libtorrent/session.hpp>
+#include <libtorrent/torrent_flags.hpp>
+#include <libtorrent/torrent_info.hpp>
 #include <zmq.hpp>
 
 #include <protocol.h>
+
+namespace {
+auto file_path(const std::shared_ptr<const lt::torrent_info> &ti)
+    -> std::string {
+  const auto &layout = ti->layout();
+  auto file_index = *(layout.file_range().begin());
+  return layout.file_path(file_index);
+}
+} // namespace
 
 namespace protocol {
 
@@ -27,14 +39,16 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s)
   if (action == "create") {
     auto torrent = lt::load_torrent_buffer(v.at(1).to_string_view());
     torrent.save_path = ".";
+    torrent.flags =
+        lt::torrent_flags::auto_managed | lt::torrent_flags::auto_managed;
 
-    const auto &layout = torrent.ti->layout();
-    auto file_index = *(layout.file_range().begin());
-    auto filename = layout.file_path(file_index);
+    auto dup_handle = s.find_torrent(torrent.info_hashes.v2);
+    const auto *state =
+        dup_handle.is_valid() ? "Existed torrent for" : "Create torrent for";
 
-    s.add_torrent(std::move(torrent));
+    auto handle = s.add_torrent(torrent);
 
-    return std::format("Create \"{}\"", filename);
+    return std::format("{} \"{}\"", state, file_path(handle.torrent_file()));
   }
   return std::unexpected{"Wrong protocol verb."};
 }
