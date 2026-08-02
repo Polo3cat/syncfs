@@ -27,6 +27,9 @@ config:
 test:
 	$(PODMAN_RUN) ctest --preset test-unixlike-clang-debug
 
+test-update:
+	$(PODMAN_RUN) ctest --preset test-unixlike-clang-debug -R syncfs-update
+
 test-perfomance:
 	$(PODMAN_RUN) ctest --preset test-unixlike-clang-debug -R syncfs-performance
 

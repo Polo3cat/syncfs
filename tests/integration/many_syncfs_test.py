@@ -1,3 +1,4 @@
+import datetime
 import subprocess
 import tempfile
 import time
@@ -98,7 +99,8 @@ def test_one_syncf_deletes_many_other(files, syncfs):
 
 def test_one_syncf_updates_many_other(files, syncfs):
     files[0].write_text("5678")
-
+    print("Start to sleep", datetime.datetime.now(tz=datetime.UTC))
     time.sleep(expected_sync_delay)
+    print("Finish to sleep", datetime.datetime.now(tz=datetime.UTC))
     for file in files:
         assert "5678" == file.read_text()

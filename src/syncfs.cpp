@@ -1,10 +1,15 @@
+#include "libtorrent/session_params.hpp"
+#include "libtorrent/torrent_handle.hpp"
+#include "libtorrent/torrent_status.hpp"
 #include <cassert>
+#include <chrono>
 #include <cstdlib>
 #include <exception>
 #include <expected>
 #include <filesystem>
 #include <format>
 #include <map>
+#include <memory>
 #include <print>
 #include <span>
 #include <spdlog/common.h>
@@ -16,6 +21,7 @@
 #include <zmq.hpp>
 
 #include <libtorrent/session.hpp>
+#include <libtorrent/torrent_info.hpp>
 
 #include <discovery.h>
 #include <files.h>
@@ -47,11 +53,61 @@ void send(const diff_t &diff, const source::Source &server) {
   server.create(diff.modified);
 }
 
+auto file_path(const std::shared_ptr<const lt::torrent_info> &ti)
+    -> std::string {
+  const auto &layout = ti->layout();
+  auto file_index = *(layout.file_range().begin());
+  return layout.file_path(file_index);
+}
+
+auto to_string(lt::torrent_status::state_t s) -> std::string {
+  switch (s) {
+  case lt::torrent_status::state_t::checking_files:
+    return "checking_files";
+  case lt::torrent_status::state_t::downloading_metadata:
+    return "downloading_metadata";
+  case lt::torrent_status::state_t::downloading:
+    return "downloading";
+  case lt::torrent_status::state_t::finished:
+    return "finished";
+  case lt::torrent_status::state_t::seeding:
+    return "seeding";
+  case lt::torrent_status::state_t::checking_resume_data:
+    return "checking_resume_data";
+  default:
+    return std::format("unknown({})",
+                       std::to_underlying<lt::torrent_status::state_t>(s));
+  }
+}
+
+void print_session_statistics(const lt::session &s) {
+  auto torrents = s.get_torrent_status(
+      [](const auto &) -> bool { return true; },
+      lt::torrent_handle::query_accurate_download_counters |
+          lt::torrent_handle::query_torrent_file);
+  auto msg = std::format("\n{}\t\t{}\t\t{}\t\t{}\t{}\t{}", "Name", "Progr",
+                         "Total", "Seeds", "Peers", "State");
+  for (const auto &t : torrents) {
+    msg =
+        std::format("{}\n{}\t\t{:.2f}\t\t{}\t\t{}\t{}\t{}", msg,
+                    file_path(t.torrent_file.lock()), t.progress, t.total_done,
+                    t.num_seeds, t.num_peers, to_string(t.state));
+  }
+  spdlog::debug(msg);
+}
+
 void sync_loop(const source::Source &server, sink::Sink listener) {
   auto const file_monitor = monitor::Monitor();
   auto former = files::list();
-  lt::session session;
+  auto params = lt::session_params{};
+  auto session = lt::session(params);
+  auto last_stats = std::chrono::steady_clock::now();
+  auto const interval = std::chrono::seconds{2};
   while (true) {
+    if (std::chrono::steady_clock::now() - last_stats >= interval) {
+      last_stats += interval;
+      print_session_statistics(session);
+    }
     if (file_monitor.wait()) {
       file_monitor.discard();
       auto current = files::list();
