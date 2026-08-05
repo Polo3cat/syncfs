@@ -114,6 +114,13 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
 
   settings.set_str(lt::settings_pack::listen_interfaces,
                    std::move(libtorrent_listen_address));
+
+  // By default libtorrent keeps a single connection per peer IP, which is
+  // precisely the setup we use for testing. This also considers situations
+  // where one receives from multiple syncfs on the same host wanting to
+  // synchornize multiple directories into the same on the remote.
+  settings.set_bool(lt::settings_pack::allow_multiple_connections_per_ip, true);
+
   auto params = lt::session_params(settings);
   auto session = lt::session(params);
 

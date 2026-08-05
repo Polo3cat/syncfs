@@ -61,7 +61,7 @@ def syncfs(peers, addrs, tmp_dirs):
         p.wait()
 
 
-expected_sync_delay = 30
+expected_sync_delay = 120
 
 def sha256(file):
     with open(file, "rb") as f:

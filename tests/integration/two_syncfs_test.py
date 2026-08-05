@@ -63,7 +63,7 @@ def syncfs_b(tmp_dir_b, peers_b):
             print(pb.stdout.read())
 
 
-expected_sync_delay = 5
+expected_sync_delay = 1
 
 
 def test_one_syncf_sends_to_another(syncfs_a, syncfs_b, tmp_dir_a, tmp_dir_b):
