@@ -4,19 +4,15 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/system/system_error.hpp>
 #include <libtorrent/fwd.hpp>
 #include <libtorrent/load_torrent.hpp>
-#include <libtorrent/pex_flags.hpp>
 #include <libtorrent/session.hpp>
-#include <libtorrent/socket.hpp>
 #include <libtorrent/torrent_flags.hpp>
 #include <libtorrent/torrent_info.hpp>
-#include <libtorrent/torrent_status.hpp>
-#include <spdlog/spdlog.h>
+
 #include <zmq.hpp>
 
 #include <protocol.h>
@@ -29,25 +25,13 @@ auto file_path(const std::shared_ptr<const lt::torrent_info> &ti)
   return layout.file_path(file_index);
 }
 
-auto can_add_peers(const lt::torrent_handle &h) -> bool {
-  const auto status = h.status({});
-  return status.state == lt::torrent_status::downloading ||
-         status.state == lt::torrent_status::seeding ||
-         status.state == lt::torrent_status::finished;
-}
-
-auto add_peers(lt::torrent_handle &h, const std::vector<lt::tcp::endpoint> &v)
+auto add_nodes(lt::session &s,
+               const std::vector<std::pair<std::string, int>> &v)
     -> std::string {
   std::string added;
-  for (const auto &peer : v) {
-    try {
-      h.connect_peer(peer, {}, lt::pex_seed);
-    } catch (const boost::system::system_error &e) {
-      spdlog::debug("Couldn't connect to peer. {}", e.what());
-      continue;
-    }
-    added =
-        std::format("{} {}:{}", added, peer.address().to_string(), peer.port());
+  for (const auto &node : v) {
+    s.add_dht_node(node);
+    added = std::format("{} {}:{}", added, node.first, node.second);
   }
   return added;
 }
@@ -71,20 +55,15 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s)
     torrent.save_path = ".";
     torrent.flags = lt::torrent_flags::auto_managed;
 
-    auto handle = s.find_torrent(torrent.info_hashes.v2);
-    const auto *state = handle.is_valid() ? "Added peers for" : "Create";
+    auto handle = s.add_torrent(torrent);
 
-    std::string peers;
-    if (handle.is_valid()) {
-      if (can_add_peers(handle)) {
-        peers = add_peers(handle, torrent.peers);
-      }
-    } else {
-      handle = s.add_torrent(torrent);
-    }
+    const std::string nodes = add_nodes(s, torrent.dht_nodes);
 
+    handle.force_dht_announce();
+
+    const auto *state = "Added nodes for";
     return std::format("{} \"{}\"{}", state, file_path(handle.torrent_file()),
-                       peers.empty() ? "" : peers);
+                       nodes.empty() ? "" : nodes);
   }
   return std::unexpected{"Wrong protocol verb."};
 }

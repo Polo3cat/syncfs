@@ -1,6 +1,5 @@
-#include "libtorrent/session_params.hpp"
-#include "libtorrent/torrent_handle.hpp"
-#include "libtorrent/torrent_status.hpp"
+#include "libtorrent/settings_pack.hpp"
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <cstdlib>
@@ -20,8 +19,13 @@
 #include <vector>
 #include <zmq.hpp>
 
+#include <libtorrent/alert.hpp>
+#include <libtorrent/extensions/ut_pex.hpp>
 #include <libtorrent/session.hpp>
+#include <libtorrent/session_params.hpp>
+#include <libtorrent/torrent_handle.hpp>
 #include <libtorrent/torrent_info.hpp>
+#include <libtorrent/torrent_status.hpp>
 
 #include <discovery.h>
 #include <files.h>
@@ -96,17 +100,55 @@ void print_session_statistics(const lt::session &s) {
   spdlog::debug(msg);
 }
 
-void sync_loop(const source::Source &server, sink::Sink listener) {
-  auto const file_monitor = monitor::Monitor();
+void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
+               std::string local_addr, unsigned short local_port) {
+
   auto former = files::list();
-  auto params = lt::session_params{};
+  auto settings = lt::settings_pack{};
+
+  const unsigned short libtorrent_port_offset = 2000;
+  const unsigned short libtorrent_listen_port =
+      local_port + libtorrent_port_offset;
+  auto libtorrent_listen_address =
+      std::format("{}:{}", "0.0.0.0", libtorrent_listen_port);
+
+  settings.set_str(lt::settings_pack::listen_interfaces,
+                   std::move(libtorrent_listen_address));
+  auto params = lt::session_params(settings);
   auto session = lt::session(params);
+
+  session.add_extension(&lt::create_ut_pex_plugin);
+
+  spdlog::info("Started libtorrent session on {}:{}", "0.0.0.0",
+               session.listen_port());
+
+  auto alert_ready = std::atomic_flag{};
+  session.set_alert_notify([&] -> void {
+    std::atomic_flag_test_and_set_explicit(&alert_ready,
+                                           std::memory_order::relaxed);
+  });
+
+  auto server =
+      source::Source(std::move(sender), std::make_pair(std::move(local_addr),
+                                                       session.listen_port()));
+  auto listener = sink::Sink(std::move(receiver));
+
+  auto const file_monitor = monitor::Monitor();
   auto last_stats = std::chrono::steady_clock::now();
   auto const interval = std::chrono::seconds{2};
   while (true) {
     if (std::chrono::steady_clock::now() - last_stats >= interval) {
       last_stats += interval;
       print_session_statistics(session);
+    }
+    if (std::atomic_flag_test_explicit(&alert_ready,
+                                       std::memory_order::relaxed)) {
+      auto alerts = std::vector<lt::alert *>{};
+      session.pop_alerts(&alerts);
+      for (const auto *alert : alerts) {
+        spdlog::debug("{}", alert->message());
+      }
+      std::atomic_flag_clear_explicit(&alert_ready, std::memory_order::relaxed);
     }
     if (file_monitor.wait()) {
       file_monitor.discard();
@@ -180,8 +222,9 @@ auto main(int argc, char *argv[]) -> int try {
   client.bind(my_address);
   spdlog::info("Publishing on {}", args[2]);
 
-  sync_loop(source::Source(std::move(client), utils::parse_host_port(args[2])),
-            sink::Sink(std::move(listener)));
+  auto [host, port] = utils::parse_host_port(args[2]);
+
+  sync_loop(std::move(client), std::move(listener), std::move(host), port);
 
 } catch (zmq::error_t &e) {
   try {
