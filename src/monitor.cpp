@@ -113,19 +113,6 @@ auto Monitor::read() const
                                      static_cast<const char *>(e.ev()->name)});
     return ev;
   });
-  /*
-      const auto *ev = _ev.ev();
-
-      std::string ev_kind = "undefined";
-      if (static_cast<bool>(ev->mask & IN_DELETE)) {
-          ev_kind = "IN_DELETE";
-      } else if (static_cast<bool>(ev->mask & IN_CLOSE_WRITE)) {
-          ev_kind = "IN_CLOSE_WRITE";
-      } else {
-          ev_kind = std::format("{:#b}", ev->mask);
-      }
-      spdlog::debug("Event {} {}", ev->wd, ev_kind);
-      return *ev;*/
 }
 
 void Monitor::discard() const { [[maybe_unused]] auto _ = this->read(); }
