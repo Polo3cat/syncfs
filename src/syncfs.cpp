@@ -239,6 +239,7 @@ auto main(int argc, char *argv[]) -> int try {
   } catch (...) {
     return EXIT_FAILURE;
   }
+  return EXIT_FAILURE;
 } catch (std::exception &e) {
   try {
     spdlog::critical("{}", e.what());

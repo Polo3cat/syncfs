@@ -1,6 +1,6 @@
 .PHONY: config build build-test build-image install \
 	files dry-format format \
-	test test-unit test-update test-perfomance \
+	test test-unit test-integration test-perfomance \
 	clean
 
 PODMAN_RUN = podman run -v $$(pwd):/syncfs:rw,Z -v $$HOME/.cache/ccache:/root/.cache/ccache:rw,Z localhost/syncfs-env
@@ -25,13 +25,14 @@ build: config dry-format
 	$(PODMAN_RUN) cmake --build .build/unixlike-clang-debug
 
 config:
+	mkdir -p .virtualenvs
 	$(PODMAN_RUN) cmake --preset unixlike-clang-debug
 
 test:
 	$(PODMAN_RUN) ctest --preset test-unixlike-clang-debug
 
-test-update:
-	$(PODMAN_RUN) ctest --preset test-unixlike-clang-debug -R syncfs-update
+test-integration:
+	$(PODMAN_RUN) ctest --preset test-unixlike-clang-debug -R syncfs-integration
 
 test-perfomance:
 	$(PODMAN_RUN) ctest --preset test-unixlike-clang-debug -R syncfs-performance

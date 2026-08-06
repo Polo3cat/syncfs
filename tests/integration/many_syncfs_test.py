@@ -2,7 +2,6 @@ import datetime
 import subprocess
 import tempfile
 import time
-
 from pathlib import PosixPath
 
 import pytest
