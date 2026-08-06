@@ -9,6 +9,7 @@ conan-cache/
 .cpm-cache
 CMakeCache.txt
 CMakeFiles/
+compile_commands.json
 Dependencies.pdf
 empty/
 syncfs.peers
