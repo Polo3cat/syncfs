@@ -13,7 +13,7 @@ function(myproject_setup_dependencies)
     NAME spdlog
     VERSION 1.17.0
     GITHUB_REPOSITORY "gabime/spdlog"
-    OPTIONS "SPDLOG_FMT_EXTERNAL ON" "CMAKE_SKIP_INSTALL_RULES TRUE"
+    OPTIONS "SPDLOG_FMT_EXTERNAL ON"
   )
 
   cpmaddpackage(
@@ -21,7 +21,7 @@ function(myproject_setup_dependencies)
     VERSION 4.3.5
     GITHUB_REPOSITORY "zeromq/libzmq"
     PATCHES patches/libzmq-cmake.patch
-    OPTIONS "BUILD_TESTS OFF" "CMAKE_SKIP_INSTALL_RULES TRUE"
+    OPTIONS "BUILD_TESTS OFF"
   )
 
   cpmaddpackage(
@@ -29,7 +29,7 @@ function(myproject_setup_dependencies)
     VERSION 4.11.0
     GITHUB_REPOSITORY "zeromq/cppzmq"
     PATCHES patches/cppzmq-zmq_addon.patch
-    OPTIONS "CPPZMQ_BUILD_TESTS OFF" "CMAKE_SKIP_INSTALL_RULES TRUE"
+    OPTIONS "CPPZMQ_BUILD_TESTS OFF"
   )
 
   cpmaddpackage(

@@ -1,8 +1,5 @@
 # Uses ycm (permissive BSD-3-Clause license) and ForwardArguments (permissive MIT license)
 
-# provides get_all_installable_targets()
-include("${CMAKE_CURRENT_LIST_DIR}/Utilities.cmake")
-
 function(myproject_package_project)
   cmake_policy(SET CMP0103 NEW) # disallow multiple calls with the same NAME
 
@@ -45,10 +42,8 @@ function(myproject_package_project)
   # Set default options
   include(GNUInstallDirs) # Define GNU standard installation directories such as CMAKE_INSTALL_DATADIR
 
-  # set default packaged targets
   if(NOT _PackageProject_TARGETS)
-    get_all_installable_targets(_PackageProject_TARGETS)
-    message(STATUS "package_project: considering ${_PackageProject_TARGETS} as the exported targets")
+    message(FATAL_ERROR "package_project: TARGETS is required")
   endif()
 
   # default to the name of the project or the given name

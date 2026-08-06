@@ -12,6 +12,12 @@ function(setup_test_dependencies)
         COMMENT "Installing Python dependencies with Poetry"
     )
 
+    # googletest is added after myproject_local_options(), so unlike the other
+    # dependencies it would inherit the global clang-tidy/cppcheck hooks and fail
+    # -warnings-as-errors on its own sources. Function scope, so tests/ keep theirs.
+    set(CMAKE_CXX_CLANG_TIDY "")
+    set(CMAKE_CXX_CPPCHECK "")
+
     cpmaddpackage(
         NAME googletest
         URL https://github.com/google/googletest/releases/download/v1.17.0/googletest-1.17.0.tar.gz

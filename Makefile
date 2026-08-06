@@ -1,4 +1,7 @@
-.PHONY = install build config test build-image files dry-format clean build-test
+.PHONY: config build build-test build-image install \
+	files dry-format format \
+	test test-unit test-update test-perfomance \
+	clean
 
 PODMAN_RUN = podman run -v $$(pwd):/syncfs:rw,Z -v $$HOME/.cache/ccache:/root/.cache/ccache:rw,Z localhost/syncfs-env
 PODMAN_BUILD = podman build -f Containerfile -v $$(pwd):/syncfs:rw,Z -v $$HOME/.cache/ccache:/root/.cache/ccache:rw,Z
