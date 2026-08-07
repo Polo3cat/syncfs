@@ -70,18 +70,12 @@ if(CMAKE_SKIP_INSTALL_RULES)
   return()
 endif()
 
-include(cmake/PackageProject.cmake)
+include(GNUInstallDirs)
 
-# Add other targets that you want installed here, by default we just package the one executable
-# we know we want to ship
-syncfs_package_project(
-  TARGETS
-  syncfs
-  syncfs_options
-  syncfs_warnings
-  # FIXME: this does not work! CK
-  # PRIVATE_DEPENDENCIES_CONFIGURED project_options project_warnings
-)
+# syncfs ships as a program, not a library: no export set and no CMake package
+# files, so nothing but the binary lands in the install prefix. The dependencies
+# are already inside it, statically linked.
+install(TARGETS syncfs RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 
 # Experience shows that explicit package naming can help make it easier to sort
 # out potential ABI related issues before they start, while helping you
