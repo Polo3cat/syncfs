@@ -7,6 +7,13 @@ set(CPM_SOURCE_CACHE "${CMAKE_CURRENT_SOURCE_DIR}/.cpm-cache")
 # targets
 function(syncfs_setup_dependencies)
 
+  # Every dependency must be a static archive so the syncfs binary carries them
+  # and runs outside the build tree. libtorrent declares BUILD_SHARED_LIBS as an
+  # option(), which writes a cache entry; once that entry exists every later
+  # configure builds all dependencies shared. Seed the cache first so the
+  # option() call is a no-op.
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build dependencies as static archives" FORCE)
+
   cpmaddpackage("gh:fmtlib/fmt#11.1.4")
 
   cpmaddpackage(
@@ -21,7 +28,10 @@ function(syncfs_setup_dependencies)
     VERSION 4.3.5
     GITHUB_REPOSITORY "zeromq/libzmq"
     PATCHES patches/libzmq-cmake.patch
-    OPTIONS "BUILD_TESTS OFF"
+    # libzmq ignores BUILD_SHARED_LIBS and uses its own BUILD_SHARED/BUILD_STATIC.
+    # With BUILD_SHARED OFF only the libzmq-static target exists, so consumers
+    # must link cppzmq-static rather than cppzmq.
+    OPTIONS "BUILD_TESTS OFF" "BUILD_SHARED OFF"
   )
 
   cpmaddpackage(

@@ -11,6 +11,7 @@ RUN dnf install -y \
 	glibc-devel \
 	kernel-devel \
 	libbsd-devel \
+	libstdc++-static \
 	lld \
 	lldb \
 	llvm \
