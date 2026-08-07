@@ -1,46 +1,8 @@
 # Build directories and binary files
-.build/
-build/
-out/
-out/coverage/*
-cmake-build-*/
-conan-cache/
+.build
 .install
 .cpm-cache
-CMakeCache.txt
-CMakeFiles/
-compile_commands.json
-Dependencies.pdf
-empty/
-syncfs.peers
 **/__pycache__/
 
-# User spesific settings
-CMakeUserPresets.json
-
-# IDE files
-.vs/
-.idea/
-.vscode/
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
-*.bak
-*.swp
-*~
-_ReSharper*
-*.log
-
-# OS Generated Files
-.DS_Store
-.AppleDouble
-.LSOverride
-._*
-.Spotlight-V100
-.Trashes
-.Trash-*
-$RECYCLE.BIN/
-.TemporaryItems
-ehthumbs.db
-Thumbs.db
+# Used by clangd lsp
+compile_commands.json
