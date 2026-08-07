@@ -5,7 +5,7 @@ set(CPM_SOURCE_CACHE "${CMAKE_CURRENT_SOURCE_DIR}/.cpm-cache")
 # Done as a function so that updates to variables like
 # CMAKE_CXX_FLAGS don't propagate out to other
 # targets
-function(myproject_setup_dependencies)
+function(syncfs_setup_dependencies)
 
   cpmaddpackage("gh:fmtlib/fmt#11.1.4")
 
