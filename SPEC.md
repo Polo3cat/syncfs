@@ -83,13 +83,15 @@ V33: ∀ `SIGTERM` & `SIGINT` → `stop_requested` set, loop ends @ next iterati
 V34: `IN_CREATE` on non-directory ⊥ drive sync — `wait()` consumes it & reports "nothing ready". file still empty, writer holds it open, `IN_CLOSE_WRITE` follows. `IN_CREATE | IN_ISDIR` ! drive sync — dir gets no 2nd event. test `Monitor.V34FileCreationAloneDoesNotDriveSync`
 V35: ∀ `create` received → ∃ torrent in session whose file path == incoming torrent file path → old handle removed (`session::remove_torrent`, ⊥ `remove_flags_t::delete_files`) before new added ∴ 1 path == 1 torrent. §R.5 dedup covers same info hash only; file update = new content = new info hash ∴ both handles would live & both claim same `save_path` file. path compare on §V.6 relative form ∴ holds @ depth 0 until §T.21 lands. info hash equal → ⊥ remove (identical re-announce ⊥ new content; remove+add would force recheck & drop swarm). tests `Protocol.V35NewTorrentReplacesSamePathTorrent`, `Protocol.V35IdenticalTorrentIsNotReadded`
 
+V36: ∀ file libtorrent wrote → ⊥ republished while unchanged. `torrent_finished_alert` → `flush_cache()`; `cache_flushed_alert` → snapshot `path → last_write_time`. ∀ diff `created`/`modified` entry equal to a snapshot dropped before send ∴ ⊥ re-hash, ⊥ duplicate info hash on wire (§R.5). later genuine edit → mtime differs → published. `alert_mask` ! include `alert_category::status` & `alert_category::storage`. snapshot @ `cache_flushed_alert`, ⊥ @ `torrent_finished_alert` — hash check ? precede final flush (`piece_finished_alert` docs). test `test_receiver_does_not_republish`
+
 ## §T TASKS
 id|status|task|cites
 T1|x|fix `syncfs-update` non-convergence|V17,B1
 T2|x|`source_test.cpp` asserted on `num_files()`, got 2 — pad. now asserts v2 `file tree`|V5,V24,B2
 T3|.|`perf_one_to_one_gb_file_test` red — 1 GiB in 30 s budget, reaches 57%. Sender hashes whole file in `lt::set_piece_hashes`, synchronous, blocks sync loop|C,V20
 T4|.|`tests/integration/many_syncfs_test.py:69` `test_one_syncf_sends_to_many_other` has ⊥ assert. loop breaks either way, test can never fail|V18
-T5|.|downloader writes file → own inotify fires → republishes identical content → duplicate info hash, wasted hash & traffic. suppress echo|V13,R5
+T5|x|downloader writes file → own inotify fires → republishes identical content → duplicate info hash, wasted hash & traffic. suppress echo|V13,R5,V36
 T6|.|integration tests wait fixed `time.sleep`. flaky & slow. poll until deadline|V18,V19
 T7|.|`README.md` still `cmake_template` boilerplate. rewrite for syncfs|G,I
 T8|.|no unit test for `protocol::act`|V3,V4,V7,V8
@@ -123,6 +125,7 @@ T35|x|runtime image. `Containerfile.run` 2 stage: build stage compiles from sour
 T36|x|`discovery::parse` used `std::fstream` ∴ read-only peers file = empty peer list, silent|V32,B5
 T37|x|no `SIGTERM`/`SIGINT` handling ∴ ⊥ stoppable as container PID 1. flag + `EINTR` tolerated in both polls|V33,B6
 T38|x|`src/protocol.cpp:58` `add_torrent` blind — no lookup of existing torrent for same path. file update leaves stale torrent seeding old content on same `save_path`. scan `session::get_torrents()` (or keep path→handle map) & `remove_torrent` old before add|V35,R5,V13,T5
+T39|.|`remove` echo — receiver deletes file on `remove`, own `IN_DELETE` fires, republishes `remove`. harmless (`filesystem::remove` on missing = no-op) but same waste class as §T.5|V13,V36
 
 ## §B BUGS
 id|date|cause|fix

@@ -3,6 +3,7 @@
 #include <cassert>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <expected>
@@ -15,12 +16,14 @@
 #include <spdlog/common.h>
 #include <spdlog/spdlog.h>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <utils.h>
 #include <vector>
 #include <zmq.hpp>
 
 #include <libtorrent/alert.hpp>
+#include <libtorrent/alert_types.hpp>
 #include <libtorrent/extensions/ut_pex.hpp>
 #include <libtorrent/session.hpp>
 #include <libtorrent/session_params.hpp>
@@ -69,6 +72,32 @@ auto file_path(const std::shared_ptr<const lt::torrent_info> &ti)
   const auto &layout = ti->layout();
   auto file_index = *(layout.file_range().begin());
   return layout.file_path(file_index);
+}
+
+// The path files::list() would report for the single file of a torrent. The
+// torrent carries it normalized ("a/f"), the listing walks "." ("./a/f").
+auto listed_path(const std::shared_ptr<const lt::torrent_info> &ti)
+    -> std::filesystem::path {
+  return std::filesystem::path{"."} / file_path(ti);
+}
+
+// Remembers what a file looked like the moment libtorrent was done writing it,
+// so the inotify event for that write can be told apart from a real local
+// edit. Without this the receiver re-hashes the file it was just sent and
+// announces an info hash every peer already has.
+void remember_written_file(files::file_map_t &written,
+                           const lt::torrent_handle &handle) {
+  const auto info = handle.torrent_file();
+  if (!info) {
+    return;
+  }
+  auto path = listed_path(info);
+  std::error_code err;
+  const auto time = std::filesystem::last_write_time(path, err);
+  if (err) {
+    return;
+  }
+  written.insert_or_assign(std::move(path), time);
 }
 
 auto to_string(lt::torrent_status::state_t s) -> std::string {
@@ -128,6 +157,13 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
   // synchornize multiple directories into the same on the remote.
   settings.set_bool(lt::settings_pack::allow_multiple_connections_per_ip, true);
 
+  // status carries torrent_finished_alert and storage carries
+  // cache_flushed_alert, the pair that tells us a file has reached disk.
+  settings.set_int(lt::settings_pack::alert_mask,
+                   static_cast<int>(static_cast<std::uint32_t>(
+                       lt::alert_category::error | lt::alert_category::status |
+                       lt::alert_category::storage)));
+
   auto params = lt::session_params(settings);
   auto session = lt::session(params);
 
@@ -148,6 +184,8 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
   auto listener = sink::Sink(std::move(receiver));
 
   auto file_monitor = monitor::Monitor();
+  // What each file looked like when libtorrent finished writing it.
+  auto written = files::file_map_t{};
   auto last_stats = std::chrono::steady_clock::now();
   auto const interval = std::chrono::seconds{2};
   while (stop_requested == 0) {
@@ -161,14 +199,39 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
       session.pop_alerts(&alerts);
       for (const auto *alert : alerts) {
         spdlog::debug("{}", alert->message());
+        // A finished torrent may still have pieces in flight to disk, so the
+        // file is only stable once the flush it triggers comes back.
+        if (const auto *finished =
+                lt::alert_cast<lt::torrent_finished_alert>(alert)) {
+          finished->handle.flush_cache();
+        } else if (const auto *flushed =
+                       lt::alert_cast<lt::cache_flushed_alert>(alert)) {
+          remember_written_file(written, flushed->handle);
+        }
       }
       std::atomic_flag_clear_explicit(&alert_ready, std::memory_order::relaxed);
     }
     if (file_monitor.wait()) {
       file_monitor.discard();
       auto current = files::list();
-      send(create_diff(former, current), server);
+      auto diff = create_diff(former, current);
+      // A file still carrying the write libtorrent gave it is an echo of
+      // something a peer already has, never news. The entries of modified
+      // hold the timestamp the file had before the change, so the comparison
+      // has to read the current one.
+      auto is_echo = [&written, &current](const auto &entry) -> bool {
+        const auto seen = written.find(entry.first);
+        const auto now = current.find(entry.first);
+        return seen != written.end() && now != current.end() &&
+               seen->second == now->second;
+      };
+      std::erase_if(diff.created, is_echo);
+      std::erase_if(diff.modified, is_echo);
+      send(diff, server);
       former = std::move(current);
+      std::erase_if(written, [&former](const auto &entry) -> bool {
+        return !former.contains(entry.first);
+      });
     }
     if (!listener.receive_ready()) {
       continue;
