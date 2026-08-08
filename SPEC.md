@@ -87,6 +87,8 @@ V36: ∀ file libtorrent wrote → ⊥ republished while unchanged. `torrent_fin
 
 V37: ∀ `remove` received that deleted an existing file → path marked; next diff `removed` entry for it dropped & mark consumed ∴ ⊥ remove echo on wire. mark set only when file existed @ receipt ∴ ⊥ stale mark swallowing a later genuine delete. mirrors §V.36 for the create side. echo ⊥ only waste — path recreated between delete & echo → echo deletes new file. tests `test_receiver_does_not_republish_remove`, `test_delete_after_suppressed_remove_is_published`
 
+V38: ∀ `remove` received → ∀ torrent in session whose file path == that path removed (`remove_torrent`, ⊥ `delete_files`) before the unlink ∴ ⊥ session seeds a vanished path & ⊥ read errors under a live torrent. unlink stays in `act` ∴ path gone deterministically when `act` returns (§V.37 mark logic depends on it). path compare on `lexically_normal` form — wire carries `files::list` key (`./f`), torrent carries normalized (`f`). mirror of §V.35 for the delete side. test `Protocol.V38RemoveDropsTorrentForPath`
+
 ## §T TASKS
 id|status|task|cites
 T1|x|fix `syncfs-update` non-convergence|V17,B1
@@ -128,7 +130,7 @@ T36|x|`discovery::parse` used `std::fstream` ∴ read-only peers file = empty pe
 T37|x|no `SIGTERM`/`SIGINT` handling ∴ ⊥ stoppable as container PID 1. flag + `EINTR` tolerated in both polls|V33,B6
 T38|x|`src/protocol.cpp:58` `add_torrent` blind — no lookup of existing torrent for same path. file update leaves stale torrent seeding old content on same `save_path`. scan `session::get_torrents()` (or keep path→handle map) & `remove_torrent` old before add|V35,R5,V13,T5
 T39|x|`remove` echo — receiver deletes file on `remove`, own `IN_DELETE` fires, republishes `remove`. O(N²) messages per delete & echo deletes a path recreated meanwhile|V13,V36,V37
-T40|.|`src/protocol.cpp` `remove` branch deletes file & leaves torrent in session ∴ session seeds a path that no longer exists. `remove_torrent` it, mirror of §V.35|V35,V37
+T40|x|`src/protocol.cpp` `remove` branch deletes file & leaves torrent in session ∴ session seeds a path that no longer exists. `remove_torrent` it, mirror of §V.35|V35,V37,V38
 
 ## §B BUGS
 id|date|cause|fix

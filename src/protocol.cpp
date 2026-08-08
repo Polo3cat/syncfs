@@ -27,6 +27,21 @@ auto file_path(const std::shared_ptr<const lt::torrent_info> &ti)
   return layout.file_path(file_index);
 }
 
+// The torrents serving one file. A torrent carries its path normalized
+// ("a/f"), while the rest of the daemon speaks in listing keys ("./a/f").
+auto torrents_at(lt::session &s, const std::filesystem::path &path)
+    -> std::vector<lt::torrent_handle> {
+  const auto wanted = path.lexically_normal();
+  std::vector<lt::torrent_handle> found;
+  for (const auto &handle : s.get_torrents()) {
+    const auto info = handle.torrent_file();
+    if (info && std::filesystem::path{file_path(info)} == wanted) {
+      found.push_back(handle);
+    }
+  }
+  return found;
+}
+
 // A file update arrives as a fresh torrent for a path we may already serve.
 // The content changed, so the info hash changed, and add_torrent() only
 // deduplicates by info hash: without this the old torrent stays in the session
@@ -35,12 +50,8 @@ auto file_path(const std::shared_ptr<const lt::torrent_info> &ti)
 // would only force a recheck and drop the swarm.
 void remove_stale_torrents(lt::session &s,
                            const lt::add_torrent_params &added) {
-  const auto path = file_path(added.ti);
-  for (const auto &handle : s.get_torrents()) {
+  for (const auto &handle : torrents_at(s, file_path(added.ti))) {
     const auto info = handle.torrent_file();
-    if (!info || file_path(info) != path) {
-      continue;
-    }
     if (info->info_hashes() == added.ti->info_hashes()) {
       continue;
     }
@@ -69,6 +80,11 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s)
     return std::unexpected{"Wrong protocol length."};
   }
   if (const auto removed = removed_path(v)) {
+    // The torrent goes first: unlinking the file underneath a live torrent
+    // leaves it seeding, and erroring on, a path that is no longer there.
+    for (const auto &handle : torrents_at(s, *removed)) {
+      s.remove_torrent(handle);
+    }
     std::filesystem::remove(*removed);
     return std::format("Delete \"{}\"", removed->native());
   }

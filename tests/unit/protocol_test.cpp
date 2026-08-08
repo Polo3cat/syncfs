@@ -115,6 +115,25 @@ TEST_F(Protocol, V35IdenticalTorrentIsNotReadded) {
   ASSERT_EQ(torrents.front().info_hashes(), expected.ti->info_hashes());
 }
 
+TEST_F(Protocol, V38RemoveDropsTorrentForPath) {
+  auto session = offline_session();
+  const auto file = std::filesystem::path{"important_file"};
+
+  const auto buffer = torrent_buffer(file, "Important file content\n");
+  ASSERT_TRUE(protocol::act(create_message(buffer), session).has_value());
+  ASSERT_EQ(session.get_torrents().size(), 1);
+
+  // The wire carries the key files::list() produced, which is the same path
+  // the torrent holds normalized.
+  std::vector<zmq::message_t> remove_message;
+  remove_message.emplace_back(std::string_view{"remove"});
+  remove_message.emplace_back(std::string_view{"./important_file"});
+  ASSERT_TRUE(protocol::act(remove_message, session).has_value());
+
+  ASSERT_TRUE(session.get_torrents().empty());
+  ASSERT_FALSE(std::filesystem::exists(file));
+}
+
 TEST_F(Protocol, RemovedPathReadsRemoveMessages) {
   std::vector<zmq::message_t> remove_message;
   remove_message.emplace_back(std::string_view{"remove"});
