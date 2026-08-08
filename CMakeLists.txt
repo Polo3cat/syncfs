@@ -14,6 +14,9 @@ project(
   DESCRIPTION "Syncronizing file system"
   LANGUAGES CXX)
 
+# Used so the linker can garbage collect later.
+string(APPEND CMAKE_C_FLAGS " -ffunction-sections -fdata-sections")
+string(APPEND CMAKE_CXX_FLAGS " -ffunction-sections -fdata-sections")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
@@ -45,18 +48,8 @@ target_compile_features(syncfs_options INTERFACE cxx_std_${CMAKE_CXX_STANDARD})
 add_library(syncfs::syncfs_options ALIAS syncfs_options)
 add_library(syncfs::syncfs_warnings ALIAS syncfs_warnings)
 
-#add_library(syncfs::syncfs_options INTERFACE IMPORTED)
-#add_library(syncfs::syncfs_warnings INTERFACE IMPORTED)
-
-# Adding the src:
 add_subdirectory(src)
 
-# Don't even look at tests if we're not top level
-if(NOT PROJECT_IS_TOP_LEVEL)
-  return()
-endif()
-
-# Adding the tests:
 include(CTest)
 
 if(BUILD_TESTING)
@@ -66,23 +59,7 @@ if(BUILD_TESTING)
 endif()
 
 
-if(CMAKE_SKIP_INSTALL_RULES)
-  return()
-endif()
-
 include(GNUInstallDirs)
-
-# syncfs ships as a program, not a library: no export set and no CMake package
-# files, so nothing but the binary lands in the install prefix. The dependencies
-# are already inside it, statically linked.
-install(TARGETS syncfs RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
-
-# Experience shows that explicit package naming can help make it easier to sort
-# out potential ABI related issues before they start, while helping you
-# track a build to a specific GIT SHA
-set(CPACK_PACKAGE_FILE_NAME
-    "${CMAKE_PROJECT_NAME}-${CMAKE_PROJECT_VERSION}-${GIT_SHORT_SHA}-${CMAKE_SYSTEM_NAME}-${CMAKE_BUILD_TYPE}-${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}"
-)
 
 # Create symlink to compile_commands.json for IDE to pick it up
 execute_process(
@@ -90,5 +67,3 @@ execute_process(
         ${CMAKE_BINARY_DIR}/compile_commands.json
         ${CMAKE_CURRENT_SOURCE_DIR}/compile_commands.json
 )
-
-include(CPack)

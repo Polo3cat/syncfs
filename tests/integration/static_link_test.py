@@ -3,7 +3,7 @@ import shutil
 import subprocess
 
 # Shared libraries the binary is allowed to load at runtime. Everything else
-# must be linked statically: the CPM dependencies and the C++ runtime.
+# must be linked statically: the CPM dependencies.
 allowed_libs = (
     "linux-vdso",
     "libc.so",
@@ -16,6 +16,11 @@ allowed_libs = (
     "libbsd.so",
     "libmd.so",
     "libz.so",
+    # The C++ runtime is a distro library too. Linking it statically cost over a
+    # megabyte and bought no portability the binary has: it already resolves
+    # libc and OpenSSL from the host. libgcc_s comes in behind libstdc++.
+    "libstdc++.so",
+    "libgcc_s.so",
     "ld-linux",
 )
 
@@ -26,8 +31,6 @@ forbidden_libs = (
     "libfmt",
     "libzmq",
     "libboost_",
-    "libstdc++",
-    "libgcc_s",
 )
 
 
@@ -69,7 +72,7 @@ def shared_libs() -> list[str]:
 
 
 def test_v30_no_cpm_dep_shared():
-    """No CPM dependency and no C++ runtime may be linked dynamically."""
+    """No CPM dependency may be linked dynamically."""
     libs = shared_libs()
 
     leaked = [lib for lib in libs if lib.startswith(forbidden_libs)]
@@ -78,7 +81,7 @@ def test_v30_no_cpm_dep_shared():
 
 
 def test_v30_only_system_libs_shared():
-    """The dynamic dependencies are limited to libc, OpenSSL and libatomic.
+    """The dynamic dependencies are limited to distro system libraries.
 
     A new entry here means a dependency started leaking into the binary as a
     shared object without being caught by the forbidden list.

@@ -27,7 +27,8 @@ target_link_libraries(syncfs PRIVATE utils)
 target_link_libraries(syncfs PRIVATE cppzmq-static)
 target_link_libraries(syncfs PRIVATE spdlog::spdlog)
 
-# Fold the C++ runtime into the binary as well. libc, OpenSSL and libatomic stay
-# dynamic so name resolution keeps working and OpenSSL updates apply without a
-# rebuild.
-target_link_options(syncfs PRIVATE -static-libstdc++ -static-libgcc)
+target_link_options(syncfs PRIVATE -static-libgcc)
+# Garbage collect sections and fold identical code.
+target_link_options(syncfs PRIVATE -fuse-ld=lld -Wl,--gc-sections -Wl,--icf=safe)
+
+install(TARGETS syncfs RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
