@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <print>
+#include <set>
 #include <span>
 #include <spdlog/common.h>
 #include <spdlog/spdlog.h>
@@ -100,6 +101,62 @@ void remember_written_file(files::file_map_t &written,
   written.insert_or_assign(std::move(path), time);
 }
 
+void drain_alerts(lt::session &session, files::file_map_t &written) {
+  auto alerts = std::vector<lt::alert *>{};
+  session.pop_alerts(&alerts);
+  for (const auto *alert : alerts) {
+    spdlog::debug("{}", alert->message());
+    // A finished torrent may still have pieces in flight to disk, so the file
+    // is only stable once the flush it triggers comes back.
+    if (const auto *finished =
+            lt::alert_cast<lt::torrent_finished_alert>(alert)) {
+      finished->handle.flush_cache();
+    } else if (const auto *flushed =
+                   lt::alert_cast<lt::cache_flushed_alert>(alert)) {
+      remember_written_file(written, flushed->handle);
+    }
+  }
+}
+
+// The changes worth announcing: what the diff reports minus everything a peer
+// caused us to do, which the peers already know about.
+auto local_changes(const files::file_map_t &former,
+                   const files::file_map_t &current,
+                   const files::file_map_t &written,
+                   std::set<std::filesystem::path> &deleted) -> diff_t {
+  auto diff = create_diff(former, current);
+  // A file still carrying the write libtorrent gave it is an echo. The entries
+  // of modified hold the timestamp the file had before the change, so the
+  // comparison has to read the current one.
+  auto is_echo = [&written, &current](const auto &entry) -> bool {
+    const auto seen = written.find(entry.first);
+    const auto now = current.find(entry.first);
+    return seen != written.end() && now != current.end() &&
+           seen->second == now->second;
+  };
+  std::erase_if(diff.created, is_echo);
+  std::erase_if(diff.modified, is_echo);
+  // Likewise a file gone because a peer said so. The mark is spent on the
+  // event it was meant for.
+  std::erase_if(diff.removed, [&deleted](const auto &entry) -> bool {
+    return deleted.erase(entry.first) > 0;
+  });
+  return diff;
+}
+
+void forget_spent_marks(const files::file_map_t &current,
+                        files::file_map_t &written,
+                        std::set<std::filesystem::path> &deleted) {
+  std::erase_if(written, [&current](const auto &entry) -> bool {
+    return !current.contains(entry.first);
+  });
+  // A path that is present again was never deleted, or has been recreated
+  // since: either way its mark no longer stands for anything.
+  std::erase_if(deleted, [&current](const auto &path) -> bool {
+    return current.contains(path);
+  });
+}
+
 auto to_string(lt::torrent_status::state_t s) -> std::string {
   switch (s) {
   case lt::torrent_status::state_t::checking_files:
@@ -186,6 +243,9 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
   auto file_monitor = monitor::Monitor();
   // What each file looked like when libtorrent finished writing it.
   auto written = files::file_map_t{};
+  // Files deleted because a peer asked for it, still waiting for their own
+  // inotify event to arrive.
+  auto deleted = std::set<std::filesystem::path>{};
   auto last_stats = std::chrono::steady_clock::now();
   auto const interval = std::chrono::seconds{2};
   while (stop_requested == 0) {
@@ -195,43 +255,15 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
     }
     if (std::atomic_flag_test_explicit(&alert_ready,
                                        std::memory_order::relaxed)) {
-      auto alerts = std::vector<lt::alert *>{};
-      session.pop_alerts(&alerts);
-      for (const auto *alert : alerts) {
-        spdlog::debug("{}", alert->message());
-        // A finished torrent may still have pieces in flight to disk, so the
-        // file is only stable once the flush it triggers comes back.
-        if (const auto *finished =
-                lt::alert_cast<lt::torrent_finished_alert>(alert)) {
-          finished->handle.flush_cache();
-        } else if (const auto *flushed =
-                       lt::alert_cast<lt::cache_flushed_alert>(alert)) {
-          remember_written_file(written, flushed->handle);
-        }
-      }
+      drain_alerts(session, written);
       std::atomic_flag_clear_explicit(&alert_ready, std::memory_order::relaxed);
     }
     if (file_monitor.wait()) {
       file_monitor.discard();
       auto current = files::list();
-      auto diff = create_diff(former, current);
-      // A file still carrying the write libtorrent gave it is an echo of
-      // something a peer already has, never news. The entries of modified
-      // hold the timestamp the file had before the change, so the comparison
-      // has to read the current one.
-      auto is_echo = [&written, &current](const auto &entry) -> bool {
-        const auto seen = written.find(entry.first);
-        const auto now = current.find(entry.first);
-        return seen != written.end() && now != current.end() &&
-               seen->second == now->second;
-      };
-      std::erase_if(diff.created, is_echo);
-      std::erase_if(diff.modified, is_echo);
-      send(diff, server);
+      send(local_changes(former, current, written, deleted), server);
       former = std::move(current);
-      std::erase_if(written, [&former](const auto &entry) -> bool {
-        return !former.contains(entry.first);
-      });
+      forget_spent_marks(former, written, deleted);
     }
     if (!listener.receive_ready()) {
       continue;
@@ -241,11 +273,20 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
       spdlog::warn(received.error());
       continue;
     }
+    // Read before acting: afterwards there is no telling whether the file was
+    // there to begin with, and a mark for a file we never had would sit around
+    // waiting to swallow a real deletion.
+    const auto removed = protocol::removed_path(received.value());
+    const bool existed = removed && std::filesystem::exists(*removed);
+
     auto r = protocol::act(received.value(), session);
     if (!r.has_value()) {
       spdlog::warn(r.error());
     } else {
       spdlog::info(r.value());
+      if (existed) {
+        deleted.insert(*removed);
+      }
     }
   }
   spdlog::info("Stopping.");

@@ -115,6 +115,25 @@ TEST_F(Protocol, V35IdenticalTorrentIsNotReadded) {
   ASSERT_EQ(torrents.front().info_hashes(), expected.ti->info_hashes());
 }
 
+TEST_F(Protocol, RemovedPathReadsRemoveMessages) {
+  std::vector<zmq::message_t> remove_message;
+  remove_message.emplace_back(std::string_view{"remove"});
+  remove_message.emplace_back(std::string_view{"./a/important_file"});
+
+  const auto path = protocol::removed_path(remove_message);
+  ASSERT_TRUE(path.has_value());
+  ASSERT_EQ(*path, std::filesystem::path{"./a/important_file"});
+
+  std::vector<zmq::message_t> create_message;
+  create_message.emplace_back(std::string_view{"create"});
+  create_message.emplace_back(std::string_view{"bencoded torrent"});
+  ASSERT_FALSE(protocol::removed_path(create_message).has_value());
+
+  std::vector<zmq::message_t> truncated;
+  truncated.emplace_back(std::string_view{"remove"});
+  ASSERT_FALSE(protocol::removed_path(truncated).has_value());
+}
+
 TEST_F(Protocol, V7AddedTorrentSavePathAndFlags) {
   auto session = offline_session();
   const auto file = std::filesystem::path{"important_file"};

@@ -85,6 +85,8 @@ V35: ∀ `create` received → ∃ torrent in session whose file path == incomin
 
 V36: ∀ file libtorrent wrote → ⊥ republished while unchanged. `torrent_finished_alert` → `flush_cache()`; `cache_flushed_alert` → snapshot `path → last_write_time`. path dropped from diff `created`/`modified` when its snapshot == its mtime in the current `files::list()` ∴ ⊥ re-hash, ⊥ duplicate info hash on wire (§R.5). compare against `current`, ⊥ against the diff entry — `create_diff` builds `modified` from `removed` ∴ its entries carry the pre-change mtime & would match the snapshot always, swallowing every genuine edit (§V.13). later genuine edit → mtime differs → published. `alert_mask` ! include `alert_category::status` & `alert_category::storage`. snapshot @ `cache_flushed_alert`, ⊥ @ `torrent_finished_alert` — hash check ? precede final flush (`piece_finished_alert` docs). test `test_receiver_does_not_republish`
 
+V37: ∀ `remove` received that deleted an existing file → path marked; next diff `removed` entry for it dropped & mark consumed ∴ ⊥ remove echo on wire. mark set only when file existed @ receipt ∴ ⊥ stale mark swallowing a later genuine delete. mirrors §V.36 for the create side. echo ⊥ only waste — path recreated between delete & echo → echo deletes new file. tests `test_receiver_does_not_republish_remove`, `test_delete_after_suppressed_remove_is_published`
+
 ## §T TASKS
 id|status|task|cites
 T1|x|fix `syncfs-update` non-convergence|V17,B1
@@ -125,7 +127,8 @@ T35|x|runtime image. `Containerfile.run` 2 stage: build stage compiles from sour
 T36|x|`discovery::parse` used `std::fstream` ∴ read-only peers file = empty peer list, silent|V32,B5
 T37|x|no `SIGTERM`/`SIGINT` handling ∴ ⊥ stoppable as container PID 1. flag + `EINTR` tolerated in both polls|V33,B6
 T38|x|`src/protocol.cpp:58` `add_torrent` blind — no lookup of existing torrent for same path. file update leaves stale torrent seeding old content on same `save_path`. scan `session::get_torrents()` (or keep path→handle map) & `remove_torrent` old before add|V35,R5,V13,T5
-T39|.|`remove` echo — receiver deletes file on `remove`, own `IN_DELETE` fires, republishes `remove`. harmless (`filesystem::remove` on missing = no-op) but same waste class as §T.5|V13,V36
+T39|x|`remove` echo — receiver deletes file on `remove`, own `IN_DELETE` fires, republishes `remove`. O(N²) messages per delete & echo deletes a path recreated meanwhile|V13,V36,V37
+T40|.|`src/protocol.cpp` `remove` branch deletes file & leaves torrent in session ∴ session seeds a path that no longer exists. `remove_torrent` it, mirror of §V.35|V35,V37
 
 ## §B BUGS
 id|date|cause|fix

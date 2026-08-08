@@ -60,6 +60,9 @@ class Node:
     def creates(self) -> list[str]:
         return [line for line in self.log.splitlines() if "-> Create" in line]
 
+    def removes(self) -> list[str]:
+        return [line for line in self.log.splitlines() if "-> Remove" in line]
+
 
 def start(peers: str, addr: str, cwd: str) -> Node:
     return Node(
@@ -128,3 +131,51 @@ def test_local_edit_after_receiving_is_published(node_a, node_b, tmp_dir_a, tmp_
     node_b.stop()
 
     assert len(node_b.creates()) == 1, "receiver did not announce its own edit"
+
+
+def test_receiver_does_not_republish_remove(node_a, node_b, tmp_dir_a, tmp_dir_b):
+    """V37: the deletion a peer asked for must not travel back. Every node
+    would answer every deletion, and an echo arriving after the path was
+    recreated deletes the new file."""
+    file_a = PosixPath(tmp_dir_a) / "file"
+    file_a.write_text("1234")
+
+    time.sleep(expected_sync_delay)
+    file_b = PosixPath(tmp_dir_b) / "file"
+    assert file_b.exists()
+
+    file_a.unlink()
+    time.sleep(expected_sync_delay)
+    assert not file_b.exists()
+
+    node_a.stop()
+    node_b.stop()
+
+    assert len(node_a.removes()) == 1, "sender announced the deletion more than once"
+    assert node_b.removes() == [], "receiver echoed the deletion it was told to make"
+
+
+def test_delete_after_suppressed_remove_is_published(
+    node_a, node_b, tmp_dir_a, tmp_dir_b
+):
+    """The mark that suppresses one echo must be consumed by it, so the next
+    genuine deletion of the same path still travels."""
+    file_a = PosixPath(tmp_dir_a) / "file"
+    file_b = PosixPath(tmp_dir_b) / "file"
+
+    file_a.write_text("1234")
+    time.sleep(expected_sync_delay)
+    assert file_b.exists()
+
+    file_a.unlink()
+    time.sleep(expected_sync_delay)
+    assert not file_b.exists()
+
+    # Same path again, this time born on the receiving side.
+    file_b.write_text("5678")
+    time.sleep(expected_sync_delay)
+    assert file_a.exists()
+
+    file_b.unlink()
+    time.sleep(expected_sync_delay)
+    assert not file_a.exists()

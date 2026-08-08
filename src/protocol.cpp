@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <format>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -67,12 +68,11 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s)
   if (v.size() != 2) {
     return std::unexpected{"Wrong protocol length."};
   }
-  auto action = v.at(0).to_string_view();
-  if (action == "remove") {
-    auto filename = v.at(1).to_string_view();
-    std::filesystem::remove(filename);
-    return std::format("Delete \"{}\"", std::string{filename});
+  if (const auto removed = removed_path(v)) {
+    std::filesystem::remove(*removed);
+    return std::format("Delete \"{}\"", removed->native());
   }
+  auto action = v.at(0).to_string_view();
   if (action == "create") {
     auto torrent = lt::load_torrent_buffer(v.at(1).to_string_view());
     torrent.save_path = ".";
@@ -91,6 +91,14 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s)
                        nodes.empty() ? "" : nodes);
   }
   return std::unexpected{"Wrong protocol verb."};
+}
+
+auto removed_path(const std::vector<zmq::message_t> &v)
+    -> std::optional<std::filesystem::path> {
+  if (v.size() != length || v.at(0).to_string_view() != "remove") {
+    return std::nullopt;
+  }
+  return std::filesystem::path{v.at(1).to_string_view()};
 }
 
 } // namespace protocol
