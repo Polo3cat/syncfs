@@ -302,7 +302,7 @@ auto pub_socket(zmq::context_t &ctx, const std::string &addr) -> zmq::socket_t {
 auto main(int argc, char *argv[]) -> int try {
   auto args = std::span(argv, static_cast<size_t>(argc));
   if (args.size() < 3) {
-    std::println("Usage: syncf <peers file> <listen address>");
+    std::println("Usage: syncfs <peers file> <listen address>");
     std::println();
     std::println("Synchronizes the working directory with <peers file>");
     std::println("<peers file> contains for each line a network address.");
