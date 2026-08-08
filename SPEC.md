@@ -32,7 +32,7 @@ Daemon keeps CWD identical across static peer set: inotify detects change → ZM
 - log: spdlog. `NDEBUG` → level `info`, pattern `[%Y-%m-%d %T] [%P] [%^%l%$] %v`. else level `debug`, `%T.%F`.
 - stats: torrent table `Name Progr Total Seeds Peers State` @ `debug`, every 2 s.
 - sig: `SIGTERM` & `SIGINT` → sync loop ends, `"Stopping."` @ `info`, `EXIT_SUCCESS` (V33).
-- test: ctest names `utils-unit`, `source-unit`, `monitor-unit`, `syncfs-integration`, `syncfs-update`, `syncfs-performance`. `make {config,build,test,test-unit,test-update,test-perfomance}` wrap them in podman.
+- test: ctest names `utils-unit`, `source-unit`, `monitor-unit`, `protocol-unit`, `syncfs-integration`, `syncfs-update`, `syncfs-performance`. `make {config,build,test,test-unit,test-update,test-perfomance}` wrap them in podman.
 
 ## §R RESEARCH
 libtorrent 2.1.0 behaviour established by debugging §B.1. Paths relative to `.cpm-cache/libtorrent/ea35609a2e1eb282111b2588b7910f375b683f92`.
@@ -53,7 +53,7 @@ V3: ∀ inbound msg → parts == 2 else `"Wrong protocol length."`
 V4: verb ∉ {`create`, `remove`} → `"Wrong protocol verb."`
 V5: ∀ generated torrent → `create_torrent::v2_only` & exactly 1 file
 V6: ∀ torrent file path → relative. `file_absolute_path` == false
-V7: ∀ added torrent → `save_path == "."` & `torrent_flags::auto_managed`
+V7: ∀ added torrent → `add_torrent_params::save_path` set `"."` & `torrent_flags::auto_managed`. libtorrent resolves `"."` @ add ∴ `torrent_status::save_path` reads absolute CWD, ⊥ `"."` (§V.16). test `Protocol.V7AddedTorrentSavePathAndFlags`
 V8: ∀ `create` received → `add_dht_node` ∀ `torrent.dht_nodes`, then `force_dht_announce`
 V9: `parse_host_port` → empty host raises `std::invalid_argument`; empty port raises `std::invalid_argument` (`std::stoi("")`); ⊥ `:` raises `std::out_of_range` (`vector::at(1)`)
 V10: `files::list` yields regular & ⊥ symlink & `last_write_time` readable only
@@ -81,7 +81,7 @@ V31: `cmake --install` → installed file set == exactly {`bin/syncfs`}. test `t
 V32: ∀ read of `<peers file>` → open mode read-only (`std::ifstream`, ⊥ `std::fstream`) ∴ peer list from a non-writable file == peer list from a writable one. test `test_v32_read_only_peers_file_is_parsed`
 V33: ∀ `SIGTERM` & `SIGINT` → `stop_requested` set, loop ends @ next iteration, exit code 0 ≤ 5 s. handler ! only assign `volatile std::sig_atomic_t`. ∴ ∀ poll in loop ! treat `EINTR` as "nothing ready", ⊥ throw — `Monitor::wait` → 0 events, `Sink::receive_ready` → false. test `test_v33_stop_signal_exits_success`
 V34: `IN_CREATE` on non-directory ⊥ drive sync — `wait()` consumes it & reports "nothing ready". file still empty, writer holds it open, `IN_CLOSE_WRITE` follows. `IN_CREATE | IN_ISDIR` ! drive sync — dir gets no 2nd event. test `Monitor.V34FileCreationAloneDoesNotDriveSync`
-V35: ∀ `create` received → ∃ torrent in session whose file path == incoming torrent file path → old handle removed (`session::remove_torrent`, ⊥ `remove_flags_t::delete_files`) before new added ∴ 1 path == 1 torrent. §R.5 dedup covers same info hash only; file update = new content = new info hash ∴ both handles would live & both claim same `save_path` file. path compare on §V.6 relative form ∴ holds @ depth 0 until §T.21 lands
+V35: ∀ `create` received → ∃ torrent in session whose file path == incoming torrent file path → old handle removed (`session::remove_torrent`, ⊥ `remove_flags_t::delete_files`) before new added ∴ 1 path == 1 torrent. §R.5 dedup covers same info hash only; file update = new content = new info hash ∴ both handles would live & both claim same `save_path` file. path compare on §V.6 relative form ∴ holds @ depth 0 until §T.21 lands. info hash equal → ⊥ remove (identical re-announce ⊥ new content; remove+add would force recheck & drop swarm). tests `Protocol.V35NewTorrentReplacesSamePathTorrent`, `Protocol.V35IdenticalTorrentIsNotReadded`
 
 ## §T TASKS
 id|status|task|cites
