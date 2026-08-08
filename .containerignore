@@ -1,0 +1,10 @@
+.git
+.build
+.install
+.cpm-cache
+.venv
+.virtualenvs
+.benchmarks
+.pytest_cache
+**/__pycache__/
+compile_commands.json

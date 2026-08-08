@@ -12,7 +12,9 @@
 namespace discovery {
 auto parse(const std::filesystem::path &peers_file)
     -> std::vector<std::string> {
-  std::fstream file{peers_file};
+  // Read-only: an fstream defaults to in|out and fails to open a peers file
+  // that is not writable, leaving the peer list silently empty.
+  std::ifstream file{peers_file};
   static constexpr size_t max_line_len{512};
   std::vector<std::string> r;
   for (std::array<char, max_line_len> line{};

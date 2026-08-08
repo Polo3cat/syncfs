@@ -52,6 +52,11 @@ auto _wait(int fd) -> int {
   pollfd p{.fd = fd, .events = POLLIN, .revents = 0};
   int const avail = ::poll(&p, 1, timeout_ms);
   if (avail == -1) {
+    // A signal handler ran during the poll; the caller checks its own
+    // termination flag on the next iteration.
+    if (errno == EINTR) {
+      return 0;
+    }
     auto msg =
         std::format("Failed to poll on inotify fd {}", ::strerror(errno));
     throw std::runtime_error(msg);

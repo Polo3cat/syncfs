@@ -40,6 +40,20 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo"
             }
+        },
+        {
+            "name": "unixlike-clang-dist",
+            "displayName": "clang Distribution",
+            "description": "Build the shipping binary: no developer tooling, no tests",
+            "inherits": "unixlike-clang-release",
+            "cacheVariables": {
+                "syncfs_ENABLE_SANITIZER_ADDRESS": "OFF",
+                "syncfs_ENABLE_SANITIZER_UNDEFINED": "OFF",
+                "syncfs_ENABLE_CLANG_TIDY": "OFF",
+                "syncfs_ENABLE_CPPCHECK": "OFF",
+                "syncfs_ENABLE_CACHE": "OFF",
+                "BUILD_TESTING": "OFF"
+            }
         }
     ],
     "testPresets": [

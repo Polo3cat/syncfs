@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cassert>
 #include <chrono>
+#include <csignal>
 #include <cstdlib>
 #include <exception>
 #include <expected>
@@ -35,6 +36,12 @@
 #include <source.h>
 
 namespace {
+// Set from a signal handler, so nothing but a volatile sig_atomic_t will do.
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+volatile std::sig_atomic_t stop_requested = 0;
+
+extern "C" void request_stop(int /*signal*/) { stop_requested = 1; }
+
 struct diff_t {
   files::file_map_t removed;
   files::file_map_t created;
@@ -143,7 +150,7 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
   auto const file_monitor = monitor::Monitor();
   auto last_stats = std::chrono::steady_clock::now();
   auto const interval = std::chrono::seconds{2};
-  while (true) {
+  while (stop_requested == 0) {
     if (std::chrono::steady_clock::now() - last_stats >= interval) {
       last_stats += interval;
       print_session_statistics(session);
@@ -178,6 +185,7 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
       spdlog::info(r.value());
     }
   }
+  spdlog::info("Stopping.");
 }
 
 auto pub_socket(zmq::context_t &ctx, const std::string &addr) -> zmq::socket_t {
@@ -206,6 +214,12 @@ auto main(int argc, char *argv[]) -> int try {
   spdlog::set_level(spdlog::level::debug);
 #endif
 
+  // As PID 1 of a container there is no default disposition for these, so
+  // without a handler the process can only be killed.
+  // The previously installed handlers are of no interest.
+  static_cast<void>(std::signal(SIGTERM, request_stop));
+  static_cast<void>(std::signal(SIGINT, request_stop));
+
   auto peers = discovery::parse(std::filesystem::path{args[1]});
   assert(!peers.empty());
 
@@ -233,6 +247,7 @@ auto main(int argc, char *argv[]) -> int try {
 
   sync_loop(std::move(client), std::move(listener), std::move(host), port);
 
+  return EXIT_SUCCESS;
 } catch (zmq::error_t &e) {
   try {
     spdlog::critical("{} {}", e.num(), e.what());

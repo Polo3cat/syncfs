@@ -1,0 +1,75 @@
+# Runtime image for syncfs.
+#
+# Stage 1 builds a release binary from the sources bind-mounted at /syncfs, so
+# no source ever lands in an image layer; stage 2 keeps only the binary and the
+# distro libraries it links against (see SPEC.md V30).
+#
+#   make run-image
+#   # or
+#   podman build -f Containerfile.run -v $(pwd):/syncfs:rw,Z -t syncfs .
+#
+#   podman run --rm -v ./data:/data:Z -v ./peers:/etc/syncfs/peers:ro,Z \
+#       -p 5555:5555 -p 7555:7555 -p 7555:7555/udp \
+#       syncfs /etc/syncfs/peers 0.0.0.0:5555
+#
+# The mount must be writable: Dependencies.cmake pins CPM_SOURCE_CACHE to
+# <source>/.cpm-cache, so dependency sources are fetched into the host tree and
+# reused across builds.
+
+FROM fedora:44 AS build
+
+RUN dnf install -y \
+	clang \
+	cmake \
+	git \
+	glibc-devel \
+	libbsd-devel \
+	lld \
+	llvm \
+	ninja \
+	openssl-devel \
+	patch \
+	python \
+	&& dnf clean all
+
+WORKDIR /syncfs
+
+# The sources live on a mount, so the layer cache cannot see them change; the
+# caller passes a fresh SOURCE_ID to force a rebuild. The build itself is
+# incremental because the build tree lives on the mount too.
+ARG SOURCE_ID=unknown
+
+# The unixlike-clang-dist preset drops the developer tooling (sanitizers,
+# clang-tidy, cppcheck) that would instrument or slow down a shipping binary.
+# Everything except /out lives on the mount and stays out of the image.
+RUN echo "building sources ${SOURCE_ID}" \
+	&& cmake --preset unixlike-clang-dist \
+	&& cmake --build .build/unixlike-clang-dist --target syncfs \
+	&& cmake --install .build/unixlike-clang-dist --prefix /out --strip
+
+FROM fedora:44
+
+# Only the shared libraries syncfs links against; every other dependency is
+# statically linked into the binary.
+RUN dnf install -y --setopt=install_weak_deps=False \
+	libatomic \
+	libbsd \
+	libmd \
+	libstdc++ \
+	openssl-libs \
+	zlib \
+	&& dnf clean all
+
+COPY --from=build /out/bin/syncfs /usr/local/bin/syncfs
+
+# The sync root is the working directory of the process.
+RUN useradd --create-home --home-dir /data --uid 1000 syncfs
+USER syncfs
+WORKDIR /data
+VOLUME /data
+
+# ZMQ PUB/SUB control plane; libtorrent data plane listens on port + 2000
+# (TCP for peers, UDP for DHT and local service discovery).
+EXPOSE 5555/tcp 7555/tcp 7555/udp
+
+ENTRYPOINT ["syncfs"]

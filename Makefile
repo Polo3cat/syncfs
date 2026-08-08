@@ -1,4 +1,4 @@
-.PHONY: config build build-test build-image install \
+.PHONY: config build build-test build-image run-image install \
 	files dry-format format \
 	test test-unit test-integration test-perfomance \
 	clean
@@ -43,6 +43,10 @@ test-unit: build
 
 build-image: Containerfile
 	$(PODMAN_BUILD) -t syncfs-env
+
+run-image: Containerfile.run
+	podman build -f Containerfile.run -v $$(pwd):/syncfs:rw,Z \
+		--build-arg SOURCE_ID=$$(date +%s) -t syncfs .
 
 clean:
 	rm -fr .venv
