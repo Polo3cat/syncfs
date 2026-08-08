@@ -4,10 +4,11 @@ function(setup_test_dependencies)
         message(FATAL_ERROR "Poetry command could not be installed locally")
     endif()
 
-    set(ENV{POETRY_VIRTUALENVS_IN_PROJECT} true)
-
+    # Passed per-command: set(ENV{}) only affects the configure-time environment,
+    # not the build-time invocation below.
     add_custom_target(poetry-install ALL
-        COMMAND ${Poetry_EXECUTABLE} install --no-root
+        COMMAND ${CMAKE_COMMAND} -E env POETRY_VIRTUALENVS_IN_PROJECT=true
+                ${Poetry_EXECUTABLE} install --no-root
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         COMMENT "Installing Python dependencies with Poetry"
     )

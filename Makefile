@@ -29,16 +29,16 @@ config:
 	mkdir -p .virtualenvs
 	$(PODMAN_RUN) cmake --preset unixlike-clang-$(LEVEL)
 
-test:
+test: build
 	$(PODMAN_RUN) ctest --preset test-unixlike-clang-$(LEVEL)
 
-test-integration:
+test-integration: build
 	$(PODMAN_RUN) ctest --preset test-unixlike-clang-$(LEVEL) -R syncfs-integration
 
-test-perfomance:
+test-perfomance: build
 	$(PODMAN_RUN) ctest --preset test-unixlike-clang-$(LEVEL) -R syncfs-performance
 
-test-unit:
+test-unit: build
 	$(PODMAN_RUN) ctest --preset test-unixlike-clang-$(LEVEL) -R .*unit
 
 build-image: Containerfile
@@ -47,4 +47,5 @@ build-image: Containerfile
 clean:
 	rm -fr .venv
 	rm -fr .build
+	rm -fr .install
 	rm -fr .cpm-cache
