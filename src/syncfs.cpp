@@ -147,7 +147,7 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
                                                        session.listen_port()));
   auto listener = sink::Sink(std::move(receiver));
 
-  auto const file_monitor = monitor::Monitor();
+  auto file_monitor = monitor::Monitor();
   auto last_stats = std::chrono::steady_clock::now();
   auto const interval = std::chrono::seconds{2};
   while (stop_requested == 0) {
