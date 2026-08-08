@@ -133,6 +133,32 @@ def test_local_edit_after_receiving_is_published(node_a, node_b, tmp_dir_a, tmp_
     assert len(node_b.creates()) == 1, "receiver did not announce its own edit"
 
 
+def test_nested_file_does_not_kill_the_daemon(node_a, node_b, tmp_dir_a):
+    """V39: a file in a subdirectory used to throw out of the sync loop and
+    take the process down with it, because the hashes were read relative to
+    the file's own parent rather than the sync root."""
+    nested = PosixPath(tmp_dir_a) / "a" / "f.txt"
+    nested.parent.mkdir()
+    nested.write_text("1234")
+
+    time.sleep(expected_sync_delay)
+    assert node_a.process.poll() is None, "sender died on a file in a subdirectory"
+
+    node_a.stop()
+    assert node_a.creates() != [], "sender never announced the nested file"
+
+
+def test_nested_file_at_depth_two_syncs(node_a, node_b, tmp_dir_a, tmp_dir_b):
+    """At depth two the torrent carries the whole path, so the file lands
+    where it belongs. Depth one still loses its directory (§T.21, §B.3)."""
+    nested = PosixPath(tmp_dir_a) / "a" / "b" / "f.txt"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("1234")
+
+    time.sleep(expected_sync_delay)
+    assert (PosixPath(tmp_dir_b) / "a" / "b" / "f.txt").read_text() == "1234"
+
+
 def test_receiver_does_not_republish_remove(node_a, node_b, tmp_dir_a, tmp_dir_b):
     """V37: the deletion a peer asked for must not travel back. Every node
     would answer every deletion, and an echo arriving after the path was

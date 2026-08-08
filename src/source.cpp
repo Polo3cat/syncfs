@@ -18,7 +18,10 @@ auto torrent_from_file(const std::filesystem::directory_entry &file)
   lt::create_torrent torrent(std::vector{std::move(file_entry)}, 0,
                              lt::create_torrent::v2_only);
   // Expensive operation. Reads disk and hashes the file contents.
-  lt::set_piece_hashes(torrent, file.path().parent_path());
+  // The entry holds the whole path relative to the sync root, and libtorrent
+  // resolves it against this directory, so anything but the root itself would
+  // apply the parent twice and look for "./a/a/f.txt".
+  lt::set_piece_hashes(torrent, ".");
   return torrent;
 }
 } // namespace
