@@ -6,6 +6,10 @@ add_executable(monitor-test monitor_test.cpp)
 target_link_libraries(monitor-test GTest::gtest_main monitor)
 add_test(NAME monitor-unit COMMAND monitor-test)
 
+add_executable(protocol-test protocol_test.cpp)
+target_link_libraries(protocol-test GTest::gtest_main protocol torrent-rasterbar)
+add_test(NAME protocol-unit COMMAND protocol-test)
+
 add_executable(source-test source_test.cpp)
 target_link_libraries(source-test GTest::gtest_main source torrent-rasterbar)
 add_test(NAME source-unit COMMAND source-test)

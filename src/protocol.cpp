@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include <libtorrent/add_torrent_params.hpp>
 #include <libtorrent/fwd.hpp>
 #include <libtorrent/load_torrent.hpp>
 #include <libtorrent/session.hpp>
@@ -23,6 +24,28 @@ auto file_path(const std::shared_ptr<const lt::torrent_info> &ti)
   const auto &layout = ti->layout();
   auto file_index = *(layout.file_range().begin());
   return layout.file_path(file_index);
+}
+
+// A file update arrives as a fresh torrent for a path we may already serve.
+// The content changed, so the info hash changed, and add_torrent() only
+// deduplicates by info hash: without this the old torrent stays in the session
+// and keeps seeding stale bytes for the very path the new one writes to.
+// Identical announcements are left alone, since removing and re-adding them
+// would only force a recheck and drop the swarm.
+void remove_stale_torrents(lt::session &s,
+                           const lt::add_torrent_params &added) {
+  const auto path = file_path(added.ti);
+  for (const auto &handle : s.get_torrents()) {
+    const auto info = handle.torrent_file();
+    if (!info || file_path(info) != path) {
+      continue;
+    }
+    if (info->info_hashes() == added.ti->info_hashes()) {
+      continue;
+    }
+    // No delete_files: the new torrent overwrites the file in place.
+    s.remove_torrent(handle);
+  }
 }
 
 auto add_nodes(lt::session &s,
@@ -54,6 +77,8 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s)
     auto torrent = lt::load_torrent_buffer(v.at(1).to_string_view());
     torrent.save_path = ".";
     torrent.flags = lt::torrent_flags::auto_managed;
+
+    remove_stale_torrents(s, torrent);
 
     auto handle = s.add_torrent(torrent);
 
