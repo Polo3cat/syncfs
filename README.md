@@ -32,9 +32,9 @@ tcp://hostA:5555
 EOF
 
 # Host A
-podman run -v peers-A:/peers,rZ -v host-A/directory:/data:rw,Z --userns=keep-id:uid=1000 syncfs /peers hostA:5555
+podman run -v peers-A:/peers,Z -v host-A/directory:/data:rw,Z --userns=keep-id:uid=1000 syncfs /peers hostA:5555
 # Host B
-podman run -v peers-B:/peers,rZ -v host-B/directory:/data:rw,Z --userns=keep-id:uid=1000 syncfs /peers hostB:5555
+podman run -v peers-B:/peers,Z -v host-B/directory:/data:rw,Z --userns=keep-id:uid=1000 syncfs /peers hostB:5555
 ```
 This syncrhonizes changes from directory `host-A/directory` on machine `Host A` to `host-B/directory` on `Host B`. These are rootless containers so you'll want to map the user owning the directories to the syncfs user inside the container.
 
