@@ -68,8 +68,4 @@ USER syncfs
 WORKDIR /data
 VOLUME /data
 
-# ZMQ PUB/SUB control plane; libtorrent data plane listens on port + 2000
-# (TCP for peers, UDP for DHT and local service discovery).
-EXPOSE 5555/tcp 7555/tcp 7555/udp
-
 ENTRYPOINT ["syncfs"]
