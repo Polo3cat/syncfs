@@ -1,0 +1,62 @@
+# 5-node syncfs mesh on one podman network.
+# Service names (hostA..hostE) are the DNS names the peers-* files point at.
+#
+#   podman compose up
+#
+# Each node gets:
+#   - /peers  read-only list of the other four nodes
+#   - /data   its own host directory, read-write
+#
+# Data dirs and peers files are created by ./setup.sh (already run).
+
+x-node: &node
+  image: syncfs
+  userns_mode: "keep-id:uid=1000"
+  restart: unless-stopped
+  networks:
+    - mesh
+
+services:
+  hostA:
+    <<: *node
+    container_name: syncfs-hostA
+    command: ["/peers", "hostA:5555"]
+    volumes:
+      - ./peers-A:/peers:ro,Z
+      - ./data-A:/data:rw,Z
+
+  hostB:
+    <<: *node
+    container_name: syncfs-hostB
+    command: ["/peers", "hostB:5555"]
+    volumes:
+      - ./peers-B:/peers:ro,Z
+      - ./data-B:/data:rw,Z
+
+  hostC:
+    <<: *node
+    container_name: syncfs-hostC
+    command: ["/peers", "hostC:5555"]
+    volumes:
+      - ./peers-C:/peers:ro,Z
+      - ./data-C:/data:rw,Z
+
+  hostD:
+    <<: *node
+    container_name: syncfs-hostD
+    command: ["/peers", "hostD:5555"]
+    volumes:
+      - ./peers-D:/peers:ro,Z
+      - ./data-D:/data:rw,Z
+
+  hostE:
+    <<: *node
+    container_name: syncfs-hostE
+    command: ["/peers", "hostE:5555"]
+    volumes:
+      - ./peers-E:/peers:ro,Z
+      - ./data-E:/data:rw,Z
+
+networks:
+  mesh:
+    driver: bridge
