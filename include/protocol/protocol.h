@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <expected>
 #include <filesystem>
 #include <optional>
@@ -11,11 +12,15 @@
 
 namespace protocol {
 
-inline const size_t length = 2;
+// Every verb fixes its own part count and this is the largest of them, which
+// is all a receiver needs to know before it has read the verb.
+inline constexpr size_t max_parts = 4;
 
 inline void subscribe(zmq::socket_t &s) {
   s.set(zmq::sockopt::subscribe, "create");
   s.set(zmq::sockopt::subscribe, "remove");
+  s.set(zmq::sockopt::subscribe, "state");
+  s.set(zmq::sockopt::subscribe, "digest");
 }
 
 auto act(const std::vector<zmq::message_t> &v, lt::session &s)

@@ -23,7 +23,10 @@ struct Source {
 
   template <Iterable T> void create(const T &container) const;
   template <Pair T> void create(const T &pair) const;
-  void create(const std::filesystem::path &file) const;
+  // The time is the origin one: the modification time this node observed,
+  // which is what orders the file against every other copy of it.
+  void create(const std::filesystem::path &file,
+              std::filesystem::file_time_type mtime) const;
 
   template <Iterable T> void remove(const T &container) const;
   template <Pair T> void remove(const T &pair) const;
@@ -36,7 +39,7 @@ template <Iterable T> void Source::create(const T &container) const {
   }
 }
 template <Pair T> void Source::create(const T &pair) const {
-  create(pair.first);
+  create(pair.first, pair.second);
 }
 
 template <Iterable T> void Source::remove(const T &container) const {

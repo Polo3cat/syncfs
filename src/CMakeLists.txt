@@ -1,8 +1,13 @@
+add_library(utils STATIC utils.cpp)
+target_include_directories(utils PUBLIC ${CMAKE_SOURCE_DIR}/include/utils)
+target_link_libraries(utils PRIVATE Boost::algorithm)
+
 add_library(source STATIC source.cpp)
 target_include_directories(source PUBLIC ${CMAKE_SOURCE_DIR}/include/source)
 target_link_libraries(source PUBLIC cppzmq-static)
 target_link_libraries(source PRIVATE spdlog::spdlog)
 target_link_libraries(source PRIVATE torrent-rasterbar)
+target_link_libraries(source PRIVATE utils)
 
 add_library(protocol STATIC protocol.cpp)
 target_include_directories(protocol PUBLIC ${CMAKE_SOURCE_DIR}/include/protocol)
@@ -13,10 +18,6 @@ target_link_libraries(protocol PRIVATE spdlog::spdlog)
 add_library(sink STATIC sink.cpp)
 target_include_directories(sink PUBLIC ${CMAKE_SOURCE_DIR}/include/sink)
 target_link_libraries(sink PRIVATE cppzmq-static)
-
-add_library(utils STATIC utils.cpp)
-target_include_directories(utils PUBLIC ${CMAKE_SOURCE_DIR}/include/utils)
-target_link_libraries(utils PRIVATE Boost::algorithm)
 
 add_library(monitor STATIC monitor.cpp)
 target_include_directories(monitor PUBLIC ${CMAKE_SOURCE_DIR}/include)

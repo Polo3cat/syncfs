@@ -11,6 +11,6 @@ target_link_libraries(protocol-test GTest::gtest_main protocol torrent-rasterbar
 add_test(NAME protocol-unit COMMAND protocol-test)
 
 add_executable(source-test source_test.cpp)
-target_link_libraries(source-test GTest::gtest_main source torrent-rasterbar)
+target_link_libraries(source-test GTest::gtest_main source utils torrent-rasterbar)
 add_test(NAME source-unit COMMAND source-test)
 target_compile_options(source-test PRIVATE $<$<CONFIG:Debug>:-glldb>)

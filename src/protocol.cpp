@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <array>
+#include <cstddef>
 #include <expected>
 #include <filesystem>
 #include <format>
@@ -60,6 +63,30 @@ void remove_stale_torrents(lt::session &s,
   }
 }
 
+// The part count is a property of the verb, not of the wire: a blanket check
+// would let a create truncated to its torrent through, and reject the very
+// message that carries an origin time.
+struct verb_t {
+  std::string_view name;
+  size_t parts;
+};
+
+constexpr size_t remove_parts = 3;
+
+constexpr std::array<verb_t, 4> verbs{
+    {{.name = "create", .parts = 4},
+     {.name = "remove", .parts = remove_parts},
+     {.name = "state", .parts = 2},
+     {.name = "digest", .parts = 4}}};
+
+auto parts_for(std::string_view verb) -> std::optional<size_t> {
+  const auto *found = std::ranges::find(verbs, verb, &verb_t::name);
+  if (found == verbs.end()) {
+    return std::nullopt;
+  }
+  return found->parts;
+}
+
 auto add_nodes(lt::session &s,
                const std::vector<std::pair<std::string, int>> &v)
     -> std::string {
@@ -76,7 +103,16 @@ namespace protocol {
 
 auto act(const std::vector<zmq::message_t> &v, lt::session &s)
     -> std::expected<std::string, std::string> {
-  if (v.size() != 2) {
+  if (v.empty()) {
+    return std::unexpected{"Wrong protocol length."};
+  }
+  const auto verb = v.at(0).to_string_view();
+  // The verb has to be read before the length can be judged at all.
+  const auto parts = parts_for(verb);
+  if (!parts.has_value()) {
+    return std::unexpected{"Wrong protocol verb."};
+  }
+  if (v.size() != *parts) {
     return std::unexpected{"Wrong protocol length."};
   }
   if (const auto removed = removed_path(v)) {
@@ -88,8 +124,7 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s)
     std::filesystem::remove(*removed);
     return std::format("Delete \"{}\"", removed->native());
   }
-  auto action = v.at(0).to_string_view();
-  if (action == "create") {
+  if (verb == "create") {
     auto torrent = lt::load_torrent_buffer(v.at(1).to_string_view());
     torrent.save_path = ".";
     torrent.flags = lt::torrent_flags::auto_managed;
@@ -106,12 +141,14 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s)
     return std::format("{} \"{}\"{}", state, file_path(handle.torrent_file()),
                        nodes.empty() ? "" : nodes);
   }
-  return std::unexpected{"Wrong protocol verb."};
+  // state and digest belong to the reconciliation, which reads them once it
+  // exists. Until then they are well formed and carry nothing to do.
+  return std::format("Nothing to do for \"{}\"", verb);
 }
 
 auto removed_path(const std::vector<zmq::message_t> &v)
     -> std::optional<std::filesystem::path> {
-  if (v.size() != length || v.at(0).to_string_view() != "remove") {
+  if (v.size() != remove_parts || v.at(0).to_string_view() != "remove") {
     return std::nullopt;
   }
   return std::filesystem::path{v.at(1).to_string_view()};

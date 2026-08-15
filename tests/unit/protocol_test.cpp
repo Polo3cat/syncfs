@@ -1,7 +1,9 @@
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -34,12 +36,37 @@ auto torrent_buffer(const std::filesystem::path &file,
   return torrent.generate_buf();
 }
 
-auto create_message(const std::vector<char> &buffer)
+// A create as source::create() sends it: the torrent, the origin time and the
+// listing key of the file it carries.
+auto create_message(const std::vector<char> &buffer,
+                    const std::string &path = "./important_file")
     -> std::vector<zmq::message_t> {
   std::vector<zmq::message_t> parts;
   parts.emplace_back(std::string_view{"create"});
   parts.emplace_back(buffer.data(), buffer.size());
+  parts.emplace_back(std::string_view{"1700000000000000000"});
+  parts.emplace_back(std::string_view{path});
   return parts;
+}
+
+auto remove_message(const std::string &path) -> std::vector<zmq::message_t> {
+  std::vector<zmq::message_t> parts;
+  parts.emplace_back(std::string_view{"remove"});
+  parts.emplace_back(std::string_view{path});
+  parts.emplace_back(std::string_view{"1700000000000000000"});
+  return parts;
+}
+
+// A message of n parts under the given verb, to say something about the count
+// alone without saying anything about the payload.
+auto message_of(const std::string &verb, size_t parts)
+    -> std::vector<zmq::message_t> {
+  std::vector<zmq::message_t> message;
+  message.emplace_back(std::string_view{verb});
+  while (message.size() < parts) {
+    message.emplace_back(std::string_view{"payload"});
+  }
+  return message;
 }
 
 // A session that touches no network: the unit tests only care about what the
@@ -125,32 +152,59 @@ TEST_F(Protocol, V38RemoveDropsTorrentForPath) {
 
   // The wire carries the key files::list() produced, which is the same path
   // the torrent holds normalized.
-  std::vector<zmq::message_t> remove_message;
-  remove_message.emplace_back(std::string_view{"remove"});
-  remove_message.emplace_back(std::string_view{"./important_file"});
-  ASSERT_TRUE(protocol::act(remove_message, session).has_value());
+  ASSERT_TRUE(
+      protocol::act(remove_message("./important_file"), session).has_value());
 
   ASSERT_TRUE(session.get_torrents().empty());
   ASSERT_FALSE(std::filesystem::exists(file));
 }
 
 TEST_F(Protocol, RemovedPathReadsRemoveMessages) {
-  std::vector<zmq::message_t> remove_message;
-  remove_message.emplace_back(std::string_view{"remove"});
-  remove_message.emplace_back(std::string_view{"./a/important_file"});
-
-  const auto path = protocol::removed_path(remove_message);
+  const auto path =
+      protocol::removed_path(remove_message("./a/important_file"));
   ASSERT_TRUE(path.has_value());
   ASSERT_EQ(*path, std::filesystem::path{"./a/important_file"});
 
-  std::vector<zmq::message_t> create_message;
-  create_message.emplace_back(std::string_view{"create"});
-  create_message.emplace_back(std::string_view{"bencoded torrent"});
-  ASSERT_FALSE(protocol::removed_path(create_message).has_value());
+  ASSERT_FALSE(protocol::removed_path(message_of("create", 4)).has_value());
+  ASSERT_FALSE(protocol::removed_path(message_of("remove", 2)).has_value());
+}
 
-  std::vector<zmq::message_t> truncated;
-  truncated.emplace_back(std::string_view{"remove"});
-  ASSERT_FALSE(protocol::removed_path(truncated).has_value());
+TEST_F(Protocol, V3PartCountIsPerVerb) {
+  auto session = offline_session();
+
+  // A create truncated to its torrent used to be a well formed message.
+  ASSERT_EQ(protocol::act(message_of("create", 2), session).error(),
+            "Wrong protocol length.");
+  ASSERT_EQ(protocol::act(message_of("remove", 2), session).error(),
+            "Wrong protocol length.");
+  ASSERT_EQ(protocol::act(message_of("state", 4), session).error(),
+            "Wrong protocol length.");
+  ASSERT_EQ(protocol::act(message_of("digest", 2), session).error(),
+            "Wrong protocol length.");
+  ASSERT_EQ(protocol::act({}, session).error(), "Wrong protocol length.");
+
+  // And the counts the interface fixes are accepted.
+  ASSERT_TRUE(protocol::act(message_of("state", 2), session).has_value());
+  ASSERT_TRUE(protocol::act(message_of("digest", 4), session).has_value());
+
+  const auto file = std::filesystem::path{"important_file"};
+  const auto buffer = torrent_buffer(file, "Important file content\n");
+  ASSERT_TRUE(protocol::act(create_message(buffer), session).has_value());
+  ASSERT_TRUE(
+      protocol::act(remove_message("./important_file"), session).has_value());
+}
+
+TEST_F(Protocol, V4UnknownVerbIsRejected) {
+  auto session = offline_session();
+
+  ASSERT_EQ(protocol::act(message_of("bogus", 2), session).error(),
+            "Wrong protocol verb.");
+  // The count is right for a create, the verb still is not.
+  ASSERT_EQ(protocol::act(message_of("update", 4), session).error(),
+            "Wrong protocol verb.");
+  // The verb is judged before the count, so a known verb never reports this.
+  ASSERT_EQ(protocol::act(message_of("state", 3), session).error(),
+            "Wrong protocol length.");
 }
 
 TEST_F(Protocol, V7AddedTorrentSavePathAndFlags) {

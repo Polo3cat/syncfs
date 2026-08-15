@@ -67,10 +67,24 @@ auto create_diff(const files::file_map_t &former,
                 .modified = modified};
 }
 
-void send(const diff_t &diff, const source::Source &server) {
+void send(const diff_t &diff, const files::file_map_t &current,
+          const source::Source &server) {
+  // The entries of modified come from removed, so they carry the timestamp the
+  // file had before the change. Announcing that one would tell every peer the
+  // edit is older than the copy they already hold, and the edit would never
+  // travel.
+  auto announce = [&current, &server](files::file_map_t m) -> void {
+    for (auto &entry : m) {
+      const auto now = current.find(entry.first);
+      if (now != current.end()) {
+        entry.second = now->second;
+      }
+    }
+    server.create(m);
+  };
   server.remove(diff.removed);
-  server.create(diff.created);
-  server.create(diff.modified);
+  announce(diff.created);
+  announce(diff.modified);
 }
 
 auto file_path(const std::shared_ptr<const lt::torrent_info> &ti)
@@ -284,14 +298,14 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
     if (file_monitor.wait()) {
       file_monitor.discard();
       auto current = files::list();
-      send(local_changes(former, current, written, deleted), server);
+      send(local_changes(former, current, written, deleted), current, server);
       former = std::move(current);
       forget_spent_marks(former, written, deleted);
     }
     if (!listener.receive_ready()) {
       continue;
     }
-    auto const received = listener.receive(protocol::length);
+    auto const received = listener.receive(protocol::max_parts);
     if (!received.has_value()) {
       spdlog::warn(received.error());
       continue;
