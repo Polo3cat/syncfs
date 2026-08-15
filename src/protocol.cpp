@@ -23,6 +23,7 @@
 #include <zmq.hpp>
 
 #include <protocol.h>
+#include <utils.h>
 
 namespace {
 auto file_path(const std::shared_ptr<const lt::torrent_info> &ti)
@@ -36,8 +37,8 @@ auto file_path(const std::shared_ptr<const lt::torrent_info> &ti)
 // holding one file under one directory drops that directory on load, so what
 // the torrent still knows is only the tail of the path and the rest of it has
 // to be read back out of the save path.
-auto held_path(const std::filesystem::path &root, const std::string &save_path,
-               const std::shared_ptr<const lt::torrent_info> &ti)
+auto join(const std::filesystem::path &root, const std::string &save_path,
+          const std::shared_ptr<const lt::torrent_info> &ti)
     -> std::filesystem::path {
   return (std::filesystem::path{save_path}.lexically_relative(root) /
           file_path(ti))
@@ -77,7 +78,7 @@ auto torrents_at(lt::session &s, const std::filesystem::path &path)
                                lt::torrent_handle::query_torrent_file);
   for (const auto &status : all) {
     const auto info = status.torrent_file.lock();
-    if (info && held_path(root, status.save_path, info) == wanted) {
+    if (info && join(root, status.save_path, info) == wanted) {
       found.push_back(status.handle);
     }
   }
@@ -142,7 +143,7 @@ auto add_nodes(lt::session &s,
 namespace protocol {
 
 auto act(const std::vector<zmq::message_t> &v, lt::session &s)
-    -> std::expected<std::string, std::string> {
+    -> std::expected<outcome, std::string> {
   if (v.empty()) {
     return std::unexpected{"Wrong protocol length."};
   }
@@ -162,12 +163,16 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s)
       s.remove_torrent(handle);
     }
     std::filesystem::remove(*removed);
-    return std::format("Delete \"{}\"", removed->native());
+    return outcome{.verb = std::string{verb},
+                   .message = std::format("Delete \"{}\"", removed->native())};
   }
   if (verb == "create") {
     // The announced path is the whole of it; the torrent may only still know
     // its tail, so the two together decide where the file is written.
     const auto announced = std::filesystem::path{v.at(3).to_string_view()};
+    const auto origin =
+        utils::to_file_time(utils::from_ticks(v.at(2).to_string_view()));
+
     auto torrent = lt::load_torrent_buffer(v.at(1).to_string_view());
     torrent.save_path = save_path_for(announced, file_path(torrent.ti));
     torrent.flags = lt::torrent_flags::auto_managed;
@@ -181,12 +186,32 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s)
     handle.force_dht_announce();
 
     const auto *state = "Added nodes for";
-    return std::format("{} \"{}\"{}", state, announced.native(),
-                       nodes.empty() ? "" : nodes);
+    return outcome{.verb = std::string{verb},
+                   .message =
+                       std::format("{} \"{}\"{}", state, announced.native(),
+                                   nodes.empty() ? "" : nodes),
+                   .created = announced,
+                   .origin = origin};
   }
-  // state and digest belong to the reconciliation, which reads them once it
-  // exists. Until then they are well formed and carry nothing to do.
-  return std::format("Nothing to do for \"{}\"", verb);
+  // state and digest belong to the reconciliation, which reads them for
+  // itself once the verb has been judged well formed here.
+  return outcome{.verb = std::string{verb},
+                 .message = std::format("Nothing to do for \"{}\"", verb)};
+}
+
+auto held_path(const lt::torrent_handle &h)
+    -> std::optional<std::filesystem::path> {
+  const auto status = h.status(lt::torrent_handle::query_save_path |
+                               lt::torrent_handle::query_torrent_file);
+  const auto info = status.torrent_file.lock();
+  if (!info) {
+    return std::nullopt;
+  }
+  // In the key form files::list() reports, which walks "." and so prefixes
+  // every path with it. A caller matching a torrent against that listing needs
+  // the same spelling, not the normalized one the comparisons here use.
+  return std::filesystem::path{"."} /
+         join(std::filesystem::current_path(), status.save_path, info);
 }
 
 auto removed_path(const std::vector<zmq::message_t> &v)

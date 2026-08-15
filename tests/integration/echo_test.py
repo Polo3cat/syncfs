@@ -113,6 +113,20 @@ def test_receiver_does_not_republish(node_a, node_b, tmp_dir_a, tmp_dir_b):
     assert node_b.creates() == [], "receiver echoed the file it had just been sent"
 
 
+def test_receiver_stamps_origin_mtime(node_a, node_b, tmp_dir_a, tmp_dir_b):
+    """V44: libtorrent writes the file with the receiver's clock, so without
+    the origin time being put back the copy is newer than the original on
+    every node it reaches and ordering has nothing left to order by."""
+    file_a = PosixPath(tmp_dir_a) / "file"
+    file_a.write_text("1234")
+
+    time.sleep(expected_sync_delay)
+    file_b = PosixPath(tmp_dir_b) / "file"
+    assert file_b.exists()
+
+    assert file_b.stat().st_mtime_ns == file_a.stat().st_mtime_ns
+
+
 def test_local_edit_after_receiving_is_published(node_a, node_b, tmp_dir_a, tmp_dir_b):
     """Echo suppression must not swallow a genuine later edit of the same
     path on the receiving side."""

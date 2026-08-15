@@ -94,33 +94,43 @@ auto file_path(const std::shared_ptr<const lt::torrent_info> &ti)
   return layout.file_path(file_index);
 }
 
-// The path files::list() would report for the single file of a torrent. The
-// torrent carries it normalized ("a/f"), the listing walks "." ("./a/f").
-auto listed_path(const std::shared_ptr<const lt::torrent_info> &ti)
-    -> std::filesystem::path {
-  return std::filesystem::path{"."} / file_path(ti);
-}
+// What this node remembers about the files its peers sent it.
+struct inbound_t {
+  // The time each file being received was written at its origin, waiting for
+  // libtorrent to be done with the file so it can be put back on it. An entry
+  // is spent by the stamp; a transfer that never finishes leaves its own
+  // behind, which is a path and a timestamp and nothing more.
+  files::file_map_t origins;
+  // What each file looked like when libtorrent finished writing it.
+  files::file_map_t written;
+};
 
-// Remembers what a file looked like the moment libtorrent was done writing it,
-// so the inotify event for that write can be told apart from a real local
-// edit. Without this the receiver re-hashes the file it was just sent and
-// announces an info hash every peer already has.
-void remember_written_file(files::file_map_t &written,
-                           const lt::torrent_handle &handle) {
-  const auto info = handle.torrent_file();
-  if (!info) {
+// Puts the time the file was written at its origin back on it, and then
+// remembers what it looked like, so the inotify event for libtorrent's own
+// write can be told apart from a real local edit. Without the snapshot the
+// receiver re-hashes the file it was just sent and announces an info hash
+// every peer already has; without the stamp first, every entry of the
+// snapshot is stale the moment it is taken and the snapshot suppresses
+// nothing at all.
+void stamp_and_remember(inbound_t &inbound, const lt::torrent_handle &handle) {
+  const auto path = protocol::held_path(handle);
+  if (!path) {
     return;
   }
-  auto path = listed_path(info);
+  if (const auto origin = inbound.origins.find(*path);
+      origin != inbound.origins.end()) {
+    static_cast<void>(utils::stamp(*path, origin->second));
+    inbound.origins.erase(origin);
+  }
   std::error_code err;
-  const auto time = std::filesystem::last_write_time(path, err);
+  const auto time = std::filesystem::last_write_time(*path, err);
   if (err) {
     return;
   }
-  written.insert_or_assign(std::move(path), time);
+  inbound.written.insert_or_assign(*path, time);
 }
 
-void drain_alerts(lt::session &session, files::file_map_t &written) {
+void drain_alerts(lt::session &session, inbound_t &inbound) {
   auto alerts = std::vector<lt::alert *>{};
   session.pop_alerts(&alerts);
   for (const auto *alert : alerts) {
@@ -132,7 +142,7 @@ void drain_alerts(lt::session &session, files::file_map_t &written) {
       finished->handle.flush_cache();
     } else if (const auto *flushed =
                    lt::alert_cast<lt::cache_flushed_alert>(alert)) {
-      remember_written_file(written, flushed->handle);
+      stamp_and_remember(inbound, flushed->handle);
     }
   }
 }
@@ -278,8 +288,7 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
   auto listener = sink::Sink(std::move(receiver));
 
   auto file_monitor = monitor::Monitor();
-  // What each file looked like when libtorrent finished writing it.
-  auto written = files::file_map_t{};
+  auto inbound = inbound_t{};
   // Files deleted because a peer asked for it, still waiting for their own
   // inotify event to arrive.
   auto deleted = std::set<std::filesystem::path>{};
@@ -292,15 +301,16 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
     }
     if (std::atomic_flag_test_explicit(&alert_ready,
                                        std::memory_order::relaxed)) {
-      drain_alerts(session, written);
+      drain_alerts(session, inbound);
       std::atomic_flag_clear_explicit(&alert_ready, std::memory_order::relaxed);
     }
     if (file_monitor.wait()) {
       file_monitor.discard();
       auto current = files::list();
-      send(local_changes(former, current, written, deleted), current, server);
+      send(local_changes(former, current, inbound.written, deleted), current,
+           server);
       former = std::move(current);
-      forget_spent_marks(former, written, deleted);
+      forget_spent_marks(former, inbound.written, deleted);
     }
     if (!listener.receive_ready()) {
       continue;
@@ -319,11 +329,14 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
     auto r = protocol::act(received.value(), session);
     if (!r.has_value()) {
       spdlog::warn(r.error());
-    } else {
-      spdlog::info(r.value());
-      if (existed) {
-        deleted.insert(*removed);
-      }
+      continue;
+    }
+    spdlog::info(r->message);
+    if (r->created) {
+      inbound.origins.insert_or_assign(*r->created, r->origin);
+    }
+    if (existed) {
+      deleted.insert(*removed);
     }
   }
   spdlog::info("Stopping.");

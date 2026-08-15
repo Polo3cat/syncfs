@@ -14,6 +14,7 @@ target_include_directories(protocol PUBLIC ${CMAKE_SOURCE_DIR}/include/protocol)
 target_link_libraries(protocol PUBLIC cppzmq-static)
 target_link_libraries(protocol PUBLIC torrent-rasterbar)
 target_link_libraries(protocol PRIVATE spdlog::spdlog)
+target_link_libraries(protocol PRIVATE utils)
 
 add_library(sink STATIC sink.cpp)
 target_include_directories(sink PUBLIC ${CMAKE_SOURCE_DIR}/include/sink)

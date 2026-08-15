@@ -1,11 +1,14 @@
 #include "utils.h"
 
 #include <boost/algorithm/string/split.hpp>
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -25,4 +28,32 @@ auto utils::to_ticks(std::chrono::system_clock::time_point t) -> std::int64_t {
 
 auto utils::to_ticks(std::filesystem::file_time_type t) -> std::int64_t {
   return to_ticks(std::chrono::file_clock::to_sys(t));
+}
+
+auto utils::from_ticks(std::string_view s)
+    -> std::chrono::system_clock::time_point {
+  std::int64_t ticks = 0;
+  // from_chars is the only conversion that refuses trailing garbage without
+  // throwing, and it speaks in pointers.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  const auto *const end = s.data() + s.size();
+  // NOLINTNEXTLINE(bugprone-suspicious-stringview-data-usage)
+  const auto parsed = std::from_chars(s.data(), end, ticks);
+  if (parsed.ec != std::errc{} || parsed.ptr != end) {
+    return std::chrono::system_clock::time_point{};
+  }
+  return std::chrono::system_clock::time_point{
+      std::chrono::system_clock::duration{ticks}};
+}
+
+auto utils::to_file_time(std::chrono::system_clock::time_point t)
+    -> std::filesystem::file_time_type {
+  return std::chrono::file_clock::from_sys(t);
+}
+
+auto utils::stamp(const std::filesystem::path &p,
+                  std::filesystem::file_time_type t) -> bool {
+  std::error_code err;
+  std::filesystem::last_write_time(p, t, err);
+  return !err;
 }
