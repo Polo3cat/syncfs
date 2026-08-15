@@ -205,7 +205,7 @@ T51|x|`digest` tombstone set consumed, ⊥ only the held set — adopt absent un
 T48|x|widen the existing `deleted` mark (`src/syncfs.cpp:271`) from `std::set<path>` to `path → delete time` & make it the §V.37 tombstone. Local deletes insert too (today only peer-driven ones do) — §V.43 cannot push a `remove` this node never recorded. `forget_spent_marks` swaps erase-when-present for erase-when-defeated + TTL expiry|V37,V43
 T49|x|origin mtime: carry on `create`, stamp with `utimensat` on receipt before the §V.36 snapshot. `create_torrent::modification_time` stays off|V44,V36,V45
 T52|.|∀ ctest test carries no `TIMEOUT` property ∴ a hung test wedges the suite for the 1500 s default & names nobody. set one per test in `tests/{unit,integration,performance}/CMakeLists.txt`|V53,B11
-T50|.|late-joiner acceptance test: N-1 nodes write M files & delete K, node N starts after. Covers create loss & delete loss in 1 test. Assert announcement repair (§V.41) & file convergence (§V.52) on separate deadlines, ⊥ 1. `?` drops the §B.9 log-wait workaround @ `tests/acceptance/large-directory-structure/test.sh:24-28` when green|V41,V52,B9,T6
+T50|x|late-joiner acceptance test: N-1 nodes write M files & delete K, node N starts after. Covers create loss & delete loss in 1 test. Assert announcement repair (§V.41) & file convergence (§V.52) on separate deadlines, ⊥ 1. `?` drops the §B.9 log-wait workaround @ `tests/acceptance/large-directory-structure/test.sh:24-28` when green|V41,V52,B9,T6
 
 ## §B BUGS
 id|date|cause|fix
