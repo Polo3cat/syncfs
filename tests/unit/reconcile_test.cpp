@@ -1,6 +1,9 @@
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <string>
 
+#include <files.h>
 #include <gtest/gtest.h>
 #include <reconcile.h>
 #include <utils.h>
@@ -64,4 +67,57 @@ TEST(Reconcile, V37TombstonesExpireOnTheTimeToLive) {
   // Still inside the window it was given, so it still stands.
   ASSERT_TRUE(tombstones.contains("./exactly"));
   ASSERT_TRUE(tombstones.contains("./fresh"));
+}
+
+TEST(Reconcile, V46CanonicalFormIsPinned) {
+  auto held = files::file_map_t{};
+  held.emplace("./b", written_at(utils::from_ticks("2")));
+  held.emplace("./a/f", written_at(utils::from_ticks("1")));
+
+  // Sorted by path, every entry the path, a NUL, the decimal ticks, a NUL.
+  // Two nodes spelling this differently diverge for good and say nothing
+  // about it, so the form is pinned here rather than left to the writer.
+  ASSERT_EQ(reconcile::encode(held), std::string("./a/f\0"
+                                                 "1\0"
+                                                 "./b\0"
+                                                 "2\0",
+                                                 14));
+
+  auto deleted = reconcile::tombstone_map_t{};
+  deleted.emplace("./gone", utils::from_ticks("3"));
+  ASSERT_EQ(reconcile::encode(deleted), std::string("./gone\0"
+                                                    "3\0",
+                                                    9));
+}
+
+TEST(Reconcile, V46NamesWithTabsAndNewlinesSurvive) {
+  // A POSIX filename excludes only "/" and NUL, so a name may hold a tab or a
+  // newline. Framing on either of those turns one file into two paths that do
+  // not exist, and a path that does not exist is a gap no repair can close.
+  auto held = files::file_map_t{};
+  held.emplace("./two\nlines", written_at(utils::from_ticks("1")));
+
+  const auto encoded = reconcile::encode(held);
+  ASSERT_NE(encoded.find('\n'), std::string::npos);
+  ASSERT_EQ(std::ranges::count(encoded, '\0'), 2);
+}
+
+TEST(Reconcile, V46HashSeparatesHeldFromDeleted) {
+  auto held = files::file_map_t{};
+  held.emplace("./f", written_at(utils::from_ticks("1")));
+  auto deleted = reconcile::tombstone_map_t{};
+  deleted.emplace("./f", utils::from_ticks("1"));
+
+  const auto empty_held = files::file_map_t{};
+  const auto empty_deleted = reconcile::tombstone_map_t{};
+
+  ASSERT_EQ(reconcile::hash(held, empty_deleted).size(), 32);
+  // A node holding a file and a node remembering it deleted are not the same
+  // node, however alike their two sets look concatenated.
+  ASSERT_NE(reconcile::hash(held, empty_deleted),
+            reconcile::hash(empty_held, deleted));
+  ASSERT_NE(reconcile::hash(held, deleted),
+            reconcile::hash(held, empty_deleted));
+  // And the same two sets always hash the same.
+  ASSERT_EQ(reconcile::hash(held, deleted), reconcile::hash(held, deleted));
 }

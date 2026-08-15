@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <iterator>
+#include <string_view>
 #include <zmq.hpp>
 
 namespace source {
@@ -31,6 +32,12 @@ struct Source {
   template <Iterable T> void remove(const T &container) const;
   template <Pair T> void remove(const T &pair) const;
   void remove(const std::filesystem::path &file) const;
+
+  // The root hash of everything this node holds and everything it knows to
+  // have been deleted, so a peer can tell in 32 bytes whether the two of them
+  // agree. A list of hashes rather than one, because splitting it into buckets
+  // later is then a change of length and not a change of format.
+  void state(std::string_view hashes) const;
 };
 
 template <Iterable T> void Source::create(const T &container) const {

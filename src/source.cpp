@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <format>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -75,5 +76,12 @@ void Source::remove(const std::filesystem::path &file) const {
   client.send(zmq::const_buffer(path.data(), path.size()),
               zmq::send_flags::sndmore);
   client.send(zmq::const_buffer(deleted.data(), deleted.size()));
+}
+
+void Source::state(std::string_view hashes) const {
+  spdlog::debug("-> State");
+
+  client.send(zmq::str_buffer("state"), zmq::send_flags::sndmore);
+  client.send(zmq::const_buffer(hashes.data(), hashes.size()));
 }
 } // namespace source

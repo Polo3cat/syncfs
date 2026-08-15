@@ -3,6 +3,7 @@
 #include <chrono>
 #include <filesystem>
 #include <map>
+#include <string>
 
 #include <files.h>
 
@@ -44,4 +45,19 @@ void mark(tombstone_map_t &tombstones, const std::filesystem::path &path,
 // been away for longer than that brings the file back, which is the price of
 // keeping the tombstones in memory.
 void expire(tombstone_map_t &tombstones, time_point now);
+
+// The pinned form of a set: sorted by path, every entry "path<NUL>ticks<NUL>",
+// ticks decimal. NUL framed because a POSIX filename excludes only "/" and NUL
+// itself, so a name holding a tab or a newline would misparse into paths that
+// do not exist, and a path that does not exist is a gap no repair can ever
+// close.
+auto encode(const files::file_map_t &held) -> std::string;
+auto encode(const tombstone_map_t &deleted) -> std::string;
+
+// The root hash the peers compare, over the held set followed by the tombstone
+// set in exactly the encoding above. Both ends have to build it the same way
+// or they diverge permanently and without a word, so the form is pinned by
+// test. Raw SHA-256, so the caller holds 32 bytes and not a spelling of them.
+auto hash(const files::file_map_t &held, const tombstone_map_t &deleted)
+    -> std::string;
 } // namespace reconcile

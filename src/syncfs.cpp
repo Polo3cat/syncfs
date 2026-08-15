@@ -1,4 +1,5 @@
 #include "libtorrent/settings_pack.hpp"
+#include <algorithm>
 #include <atomic>
 #include <cassert>
 #include <chrono>
@@ -233,11 +234,25 @@ auto to_string(lt::torrent_status::state_t s) -> std::string {
   }
 }
 
-void print_session_statistics(const lt::session &s) {
-  auto torrents = s.get_torrent_status(
+auto torrent_states(const lt::session &s) -> std::vector<lt::torrent_status> {
+  return s.get_torrent_status(
       [](const auto &) -> bool { return true; },
       lt::torrent_handle::query_accurate_download_counters |
           lt::torrent_handle::query_torrent_file);
+}
+
+// Whether every torrent has stopped moving bytes. Half of the quiescence gate,
+// and it costs nothing: the statistics already ask for this list every two
+// seconds. A node still receiving would otherwise publish the hash of a tree
+// it is in the middle of filling in.
+auto all_settled(const std::vector<lt::torrent_status> &torrents) -> bool {
+  return std::ranges::all_of(torrents, [](const auto &t) -> bool {
+    return t.state == lt::torrent_status::state_t::seeding ||
+           t.state == lt::torrent_status::state_t::finished;
+  });
+}
+
+void print_session_statistics(const std::vector<lt::torrent_status> &torrents) {
   auto msg = std::format("\n{}\t\t{}\t\t{}\t\t{}\t{}\t{}", "Name", "Progr",
                          "Total", "Seeds", "Peers", "State");
   for (const auto &t : torrents) {
@@ -322,10 +337,18 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
   auto tombstones = reconcile::tombstone_map_t{};
   auto last_stats = std::chrono::steady_clock::now();
   auto const interval = std::chrono::seconds{2};
+  // The last time anything happened to the sync directory, whether this node
+  // did it or libtorrent did.
+  auto last_change = std::chrono::steady_clock::now();
+  auto last_state = std::chrono::steady_clock::now();
+  bool settled = true;
   while (stop_requested == 0) {
-    if (std::chrono::steady_clock::now() - last_stats >= interval) {
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_stats >= interval) {
       last_stats += interval;
-      print_session_statistics(session);
+      const auto torrents = torrent_states(session);
+      print_session_statistics(torrents);
+      settled = all_settled(torrents);
     }
     if (std::atomic_flag_test_explicit(&alert_ready,
                                        std::memory_order::relaxed)) {
@@ -334,11 +357,24 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
     }
     if (file_monitor.wait()) {
       file_monitor.discard();
+      last_change = now;
       auto current = files::list();
       send(local_changes(former, current, inbound.written, tombstones), current,
            server);
       former = std::move(current);
       forget_spent_marks(former, inbound.written, tombstones);
+    }
+    // The root hash goes out while the directory is quiet, and once a minute
+    // whether it is quiet or not. Without that ceiling a workload writing
+    // every nine seconds keeps the node busy for ever and the repair never
+    // runs in exactly the regime that loses announcements.
+    const auto since_state = now - last_state;
+    const bool quiescent =
+        settled && (now - last_change >= reconcile::quiescence_window);
+    if (since_state >= reconcile::state_ceiling ||
+        (quiescent && since_state >= reconcile::period)) {
+      last_state = now;
+      server.state(reconcile::hash(former, tombstones));
     }
     if (!listener.receive_ready()) {
       continue;
