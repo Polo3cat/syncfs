@@ -15,7 +15,18 @@ source ./setup.sh
 
 podman-compose up -d
 
-sleep 1
+# ZMQ publishers drop what they send before a subscriber has finished
+# connecting, so nothing may be written until every daemon is up and every
+# subscription has reached every publisher. The grace period covers the
+# handshakes, which no log line reports.
+echo "Waiting for every node to come up..."
+for node in A B C D E; do
+	until podman logs "syncfs-host${node}" 2>&1 | grep -q "Started libtorrent session"; do
+		sleep 1
+	done
+done
+sleep 5
+
 echo "Generating random dirs and files..."
 
 for i in {1..11}; do for j in {1..11}; do 

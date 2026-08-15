@@ -40,6 +40,11 @@
 #include <source.h>
 
 namespace {
+// How many announcements may sit queued on either end before ZMQ starts
+// dropping them. One announcement per file, so this is the largest burst of
+// file changes that survives a receiver busy adding torrents.
+const int announcement_backlog = 100000;
+
 // Set from a signal handler, so nothing but a volatile sig_atomic_t will do.
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 volatile std::sig_atomic_t stop_requested = 0;
@@ -349,6 +354,13 @@ auto main(int argc, char *argv[]) -> int try {
 
   zmq::socket_t listener{ctx, zmq::socket_type::sub};
   protocol::subscribe(listener);
+  // A publisher silently discards messages for a subscriber whose queue is
+  // full, and the default queue is a thousand messages. One announcement per
+  // file means a directory of a few thousand files overruns it long before the
+  // receiver, which adds one torrent per loop iteration, has caught up, and
+  // the files whose announcement was dropped are never synchronized. The high
+  // water marks have to be set before the socket connects or binds.
+  listener.set(zmq::sockopt::rcvhwm, announcement_backlog);
 
   for (const auto &peer : peers) {
     listener.connect(peer);
@@ -362,6 +374,7 @@ auto main(int argc, char *argv[]) -> int try {
   // The "source" server does not need to be available early.
   // ZMQ makes the actual underlying connection as needed.
   zmq::socket_t client{ctx, zmq::socket_type::pub};
+  client.set(zmq::sockopt::sndhwm, announcement_backlog);
   client.bind(my_address);
   spdlog::info("Publishing on {}", args[2]);
 
