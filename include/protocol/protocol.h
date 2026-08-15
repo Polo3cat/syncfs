@@ -51,6 +51,12 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s,
 auto held_path(const lt::torrent_handle &h)
     -> std::optional<std::filesystem::path>;
 
+// Takes a path out of the session and off the disk, in that order. Unlinking
+// underneath a live torrent leaves it seeding, and erroring on, a file that is
+// no longer there. Used for a deletion this node was told about and for one it
+// worked out from a peer's digest alike.
+void erase(lt::session &s, const std::filesystem::path &path);
+
 // The path a message asks to delete, or nothing if it asks for something
 // else. Lets a caller know which file act() is about to remove without
 // having to read the wire format itself.

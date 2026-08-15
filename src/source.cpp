@@ -84,4 +84,15 @@ void Source::state(std::string_view hashes) const {
   client.send(zmq::str_buffer("state"), zmq::send_flags::sndmore);
   client.send(zmq::const_buffer(hashes.data(), hashes.size()));
 }
+
+void Source::digest(std::string_view held, std::string_view deleted) const {
+  spdlog::debug("-> Digest");
+
+  client.send(zmq::str_buffer("digest"), zmq::send_flags::sndmore);
+  client.send(zmq::const_buffer(endpoint.data(), endpoint.size()),
+              zmq::send_flags::sndmore);
+  client.send(zmq::const_buffer(held.data(), held.size()),
+              zmq::send_flags::sndmore);
+  client.send(zmq::const_buffer(deleted.data(), deleted.size()));
+}
 } // namespace source

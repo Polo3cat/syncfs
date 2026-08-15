@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include <libtorrent/hasher.hpp>
 #include <libtorrent/sha1_hash.hpp>
@@ -22,6 +24,27 @@ void append(std::string &out, const std::filesystem::path &path,
   out.push_back('\0');
   out.append(std::to_string(ticks));
   out.push_back('\0');
+}
+
+// Walks the pinned form, handing back one path and its ticks at a time. A
+// tail that does not close both of its fields is dropped whole, along with
+// everything after it: half an entry is not an entry, and a path invented out
+// of one would be a gap no repair could ever close.
+template <typename F> void for_each_entry(std::string_view form, F on_entry) {
+  size_t at = 0;
+  while (at < form.size()) {
+    const auto path_end = form.find('\0', at);
+    if (path_end == std::string_view::npos) {
+      return;
+    }
+    const auto ticks_end = form.find('\0', path_end + 1);
+    if (ticks_end == std::string_view::npos) {
+      return;
+    }
+    on_entry(form.substr(at, path_end - at),
+             form.substr(path_end + 1, ticks_end - path_end - 1));
+    at = ticks_end + 1;
+  }
 }
 
 // libtorrent asserts on an empty update, so an empty set is fed nothing at
@@ -93,5 +116,66 @@ auto hash(const files::file_map_t &held, const tombstone_map_t &deleted)
   const auto digest = hasher.final();
   return std::string{digest.data(),
                      static_cast<size_t>(lt::sha256_hash::size())};
+}
+
+auto decode_held(std::string_view form) -> files::file_map_t {
+  files::file_map_t held;
+  for_each_entry(form, [&held](auto path, auto ticks) -> void {
+    held.insert_or_assign(std::filesystem::path{path},
+                          utils::to_file_time(utils::from_ticks(ticks)));
+  });
+  return held;
+}
+
+auto decode_tombstones(std::string_view form) -> tombstone_map_t {
+  tombstone_map_t deleted;
+  for_each_entry(form, [&deleted](auto path, auto ticks) -> void {
+    deleted.insert_or_assign(std::filesystem::path{path},
+                             utils::from_ticks(ticks));
+  });
+  return deleted;
+}
+
+auto adoptable(const tombstone_map_t &theirs, const files::file_map_t &held,
+               const tombstone_map_t &mine, time_point now) -> tombstone_map_t {
+  tombstone_map_t adopt;
+  for (const auto &[path, at] : theirs) {
+    if (mine.contains(path)) {
+      continue;
+    }
+    // Already past its time here. Taking it on would only hand it straight
+    // back to the peer next round, for as long as the two disagree about
+    // whether it has expired.
+    if (now - at > tombstone_ttl) {
+      continue;
+    }
+    const auto file = held.find(path);
+    if (file != held.end() && !beats(at, file->second)) {
+      continue;
+    }
+    adopt.emplace(path, at);
+  }
+  return adopt;
+}
+
+auto gaps(const files::file_map_t &mine, const tombstone_map_t &tombstones,
+          const files::file_map_t &theirs)
+    -> std::vector<std::filesystem::path> {
+  std::vector<std::filesystem::path> found;
+  for (const auto &[path, written] : mine) {
+    // A copy this node's own tombstones have already killed is not something
+    // to hand anyone: repairing it would bring back the file the deletion was
+    // about.
+    const auto grave = tombstones.find(path);
+    if (grave != tombstones.end() && beats(grave->second, written)) {
+      continue;
+    }
+    const auto peer = theirs.find(path);
+    if (peer == theirs.end() ||
+        utils::to_ticks(peer->second) < utils::to_ticks(written)) {
+      found.push_back(path);
+    }
+  }
+  return found;
 }
 } // namespace reconcile

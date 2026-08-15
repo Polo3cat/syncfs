@@ -17,6 +17,7 @@
 #include <spdlog/common.h>
 #include <spdlog/spdlog.h>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <utils.h>
@@ -234,6 +235,99 @@ auto to_string(lt::torrent_status::state_t s) -> std::string {
   }
 }
 
+// What a peer's digest asks of this node. The deletions it carries that this
+// node never heard are taken on, and any file here that loses to one of them
+// goes: a node that never saw the remove would otherwise mismatch the root
+// hash for ever and ship a full digest every round, and a node coming back
+// with the file would hand it to everyone again. What is left over is the
+// files this node holds and the peer does not, which are its to repair.
+void read_digest(const std::vector<zmq::message_t> &v, lt::session &session,
+                 files::file_map_t &former,
+                 reconcile::tombstone_map_t &tombstones) {
+  const auto held = reconcile::decode_held(v.at(2).to_string_view());
+  const auto deleted = reconcile::decode_tombstones(v.at(3).to_string_view());
+
+  // Adoption comes first. The other order would have this node repair a file
+  // back to the very peer that has just said the file is dead.
+  for (const auto &[path, at] : reconcile::adoptable(
+           deleted, former, tombstones, std::chrono::system_clock::now())) {
+    reconcile::mark(tombstones, path, at);
+    if (former.erase(path) > 0) {
+      protocol::erase(session, path);
+      spdlog::info("Delete \"{}\", a peer had it deleted", path.native());
+    }
+  }
+
+  const auto missing = reconcile::gaps(former, tombstones, held);
+  if (!missing.empty()) {
+    spdlog::info("{} paths to repair for a peer", missing.size());
+  }
+}
+
+// When the root hash is due to go out: once a reconcile period while the
+// directory is quiet and every torrent has settled, and once a minute
+// regardless. Without that ceiling a workload writing every nine seconds keeps
+// the node busy for ever and the repair never runs in exactly the regime that
+// loses announcements; without the gate a node still receiving publishes the
+// hash of a tree it is halfway through filling in.
+struct quiescence_t {
+  std::chrono::steady_clock::time_point now;
+  std::chrono::steady_clock::time_point last_state;
+  std::chrono::steady_clock::time_point last_change;
+  bool settled = true;
+};
+
+auto state_due(const quiescence_t &q) -> bool {
+  const auto since_state = q.now - q.last_state;
+  const bool quiescent =
+      q.settled && (q.now - q.last_change >= reconcile::quiescence_window);
+  return since_state >= reconcile::state_ceiling ||
+         (quiescent && since_state >= reconcile::period);
+}
+
+// The two verbs the reconciliation reads for itself, once act() has judged
+// them well formed.
+void reconcile_message(std::string_view verb,
+                       const std::vector<zmq::message_t> &v,
+                       lt::session &session, const source::Source &server,
+                       files::file_map_t &former,
+                       reconcile::tombstone_map_t &tombstones) {
+  // A root hash that differs means one of the two is missing something and
+  // neither knows what. Both answer with a full digest: on a mismatch each
+  // side's is information the other needs, so there is nothing to suppress.
+  if (verb == "state") {
+    if (v.at(1).to_string_view() != reconcile::hash(former, tombstones)) {
+      server.digest(reconcile::encode(former), reconcile::encode(tombstones));
+    }
+    return;
+  }
+  if (verb == "digest" && v.at(1).to_string_view() != server.endpoint) {
+    read_digest(v, session, former, tombstones);
+  }
+}
+
+// One inbound message, from the wire to whatever it asks of this node.
+void receive_one(const sink::Sink &listener, lt::session &session,
+                 const source::Source &server, files::file_map_t &former,
+                 reconcile::tombstone_map_t &tombstones, inbound_t &inbound) {
+  auto const received = listener.receive(protocol::max_parts);
+  if (!received.has_value()) {
+    spdlog::warn(received.error());
+    return;
+  }
+  auto r = protocol::act(received.value(), session, tombstones);
+  if (!r.has_value()) {
+    spdlog::warn(r.error());
+    return;
+  }
+  spdlog::info(r->message);
+  if (r->created) {
+    inbound.origins.insert_or_assign(*r->created, r->origin);
+  }
+  reconcile_message(r->verb, received.value(), session, server, former,
+                    tombstones);
+}
+
 auto torrent_states(const lt::session &s) -> std::vector<lt::torrent_status> {
   return s.get_torrent_status(
       [](const auto &) -> bool { return true; },
@@ -324,9 +418,10 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
                                            std::memory_order::relaxed);
   });
 
-  auto server =
-      source::Source(std::move(sender), std::make_pair(std::move(local_addr),
-                                                       session.listen_port()));
+  const auto endpoint = std::format("tcp://{}:{}", local_addr, local_port);
+  auto server = source::Source(
+      std::move(sender),
+      std::make_pair(std::move(local_addr), session.listen_port()), endpoint);
   auto listener = sink::Sink(std::move(receiver));
 
   auto file_monitor = monitor::Monitor();
@@ -364,34 +459,15 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
       former = std::move(current);
       forget_spent_marks(former, inbound.written, tombstones);
     }
-    // The root hash goes out while the directory is quiet, and once a minute
-    // whether it is quiet or not. Without that ceiling a workload writing
-    // every nine seconds keeps the node busy for ever and the repair never
-    // runs in exactly the regime that loses announcements.
-    const auto since_state = now - last_state;
-    const bool quiescent =
-        settled && (now - last_change >= reconcile::quiescence_window);
-    if (since_state >= reconcile::state_ceiling ||
-        (quiescent && since_state >= reconcile::period)) {
+    if (state_due({.now = now,
+                   .last_state = last_state,
+                   .last_change = last_change,
+                   .settled = settled})) {
       last_state = now;
       server.state(reconcile::hash(former, tombstones));
     }
-    if (!listener.receive_ready()) {
-      continue;
-    }
-    auto const received = listener.receive(protocol::max_parts);
-    if (!received.has_value()) {
-      spdlog::warn(received.error());
-      continue;
-    }
-    auto r = protocol::act(received.value(), session, tombstones);
-    if (!r.has_value()) {
-      spdlog::warn(r.error());
-      continue;
-    }
-    spdlog::info(r->message);
-    if (r->created) {
-      inbound.origins.insert_or_assign(*r->created, r->origin);
+    if (listener.receive_ready()) {
+      receive_one(listener, session, server, former, tombstones, inbound);
     }
   }
   spdlog::info("Stopping.");

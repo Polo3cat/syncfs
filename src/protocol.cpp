@@ -159,12 +159,7 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s,
     return std::unexpected{"Wrong protocol length."};
   }
   if (const auto removed = removed_path(v)) {
-    // The torrent goes first: unlinking the file underneath a live torrent
-    // leaves it seeding, and erroring on, a path that is no longer there.
-    for (const auto &handle : torrents_at(s, *removed)) {
-      s.remove_torrent(handle);
-    }
-    std::filesystem::remove(*removed);
+    erase(s, *removed);
     // Recorded even for a path this node never held: the peer that still
     // holds it has to be told, and it can only be told by a node that
     // remembers the deletion.
@@ -218,6 +213,15 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s,
   // itself once the verb has been judged well formed here.
   return outcome{.verb = std::string{verb},
                  .message = std::format("Nothing to do for \"{}\"", verb)};
+}
+
+void erase(lt::session &s, const std::filesystem::path &path) {
+  // The torrent goes first: unlinking the file underneath a live torrent
+  // leaves it seeding, and erroring on, a path that is no longer there.
+  for (const auto &handle : torrents_at(s, path)) {
+    s.remove_torrent(handle);
+  }
+  std::filesystem::remove(path);
 }
 
 auto held_path(const lt::torrent_handle &h)

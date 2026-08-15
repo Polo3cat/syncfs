@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include <files.h>
 
@@ -60,4 +62,26 @@ auto encode(const tombstone_map_t &deleted) -> std::string;
 // test. Raw SHA-256, so the caller holds 32 bytes and not a spelling of them.
 auto hash(const files::file_map_t &held, const tombstone_map_t &deleted)
     -> std::string;
+
+// The inverse of encode(). An entry that does not close both of its fields is
+// dropped along with everything after it: a digest cut short says nothing
+// about what it never carried, and inventing an entry from half of one would
+// invent a gap that no repair can ever close.
+auto decode_held(std::string_view form) -> files::file_map_t;
+auto decode_tombstones(std::string_view form) -> tombstone_map_t;
+
+// The deletions in a peer's digest this node has not got. A node that never
+// saw a remove would otherwise mismatch the root hash for ever and ship a
+// full digest every round, and a node coming back with the file would bring
+// it back to everyone. Already defeated by this node's own copy, or already
+// past the time to live here, means not worth adopting.
+auto adoptable(const tombstone_map_t &theirs, const files::file_map_t &held,
+               const tombstone_map_t &mine, time_point now) -> tombstone_map_t;
+
+// The paths this node holds that a peer either lacks or holds an older copy
+// of. The holder is the one that repairs them: PUB/SUB has no request path,
+// so a node with a gap has no way of asking anyone for anything.
+auto gaps(const files::file_map_t &mine, const tombstone_map_t &tombstones,
+          const files::file_map_t &theirs)
+    -> std::vector<std::filesystem::path>;
 } // namespace reconcile

@@ -113,7 +113,8 @@ TEST_F(TempFile, CreateSendsTorrent) {
   constexpr auto source_address = 3000;
   Wire wire{"tcp://127.0.0.1:3000", "create"};
   auto sender = source::Source(std::move(wire.publisher),
-                               std::pair{"127.0.0.1", source_address});
+                               std::pair{"127.0.0.1", source_address},
+                               "tcp://127.0.0.1:3000");
 
   std::array<zmq::message_t, 4> recv_msgs{};
   ASSERT_TRUE(announce_until_received(wire.subscriber, recv_msgs, [&] -> void {
@@ -152,7 +153,8 @@ TEST_F(TempFile, V48CreateCarriesOriginMtimeAndPath) {
   constexpr auto source_address = 3001;
   Wire wire{"tcp://127.0.0.1:3001", "create"};
   auto sender = source::Source(std::move(wire.publisher),
-                               std::pair{"127.0.0.1", source_address});
+                               std::pair{"127.0.0.1", source_address},
+                               "tcp://127.0.0.1:3000");
 
   const auto mtime = std::filesystem::last_write_time(this->file);
 
@@ -174,7 +176,8 @@ TEST_F(TempFile, RemoveCarriesDeleteTime) {
   constexpr auto source_address = 3002;
   Wire wire{"tcp://127.0.0.1:3002", "remove"};
   auto sender = source::Source(std::move(wire.publisher),
-                               std::pair{"127.0.0.1", source_address});
+                               std::pair{"127.0.0.1", source_address},
+                               "tcp://127.0.0.1:3000");
 
   const auto before = utils::to_ticks(std::chrono::system_clock::now());
 
