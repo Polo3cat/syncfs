@@ -12,7 +12,6 @@
 #include <map>
 #include <memory>
 #include <print>
-#include <set>
 #include <span>
 #include <spdlog/common.h>
 #include <spdlog/spdlog.h>
@@ -36,6 +35,7 @@
 #include <files.h>
 #include <monitor.h>
 #include <protocol.h>
+#include <reconcile.h>
 #include <sink.h>
 #include <source.h>
 
@@ -152,7 +152,7 @@ void drain_alerts(lt::session &session, inbound_t &inbound) {
 auto local_changes(const files::file_map_t &former,
                    const files::file_map_t &current,
                    const files::file_map_t &written,
-                   std::set<std::filesystem::path> &deleted) -> diff_t {
+                   reconcile::tombstone_map_t &tombstones) -> diff_t {
   auto diff = create_diff(former, current);
   // A file still carrying the write libtorrent gave it is an echo. The entries
   // of modified hold the timestamp the file had before the change, so the
@@ -165,25 +165,52 @@ auto local_changes(const files::file_map_t &former,
   };
   std::erase_if(diff.created, is_echo);
   std::erase_if(diff.modified, is_echo);
-  // Likewise a file gone because a peer said so. The mark is spent on the
-  // event it was meant for.
-  std::erase_if(diff.removed, [&deleted](const auto &entry) -> bool {
-    return deleted.erase(entry.first) > 0;
+  // A file that is back but no newer than the deletion that killed it stays
+  // where it is: every peer still holds that deletion and would repair the
+  // file away again, which is last write wins applied honestly rather than an
+  // exception carved out for it. A file that is newer cancels the deletion.
+  auto loses_to_tombstone = [&tombstones, &current](const auto &entry) -> bool {
+    const auto grave = tombstones.find(entry.first);
+    if (grave == tombstones.end()) {
+      return false;
+    }
+    const auto now = current.find(entry.first);
+    if (now != current.end() && !reconcile::beats(grave->second, now->second)) {
+      tombstones.erase(grave);
+      return false;
+    }
+    return true;
+  };
+  std::erase_if(diff.created, loses_to_tombstone);
+  std::erase_if(diff.modified, loses_to_tombstone);
+  // A deletion this node already remembers is the echo of one a peer asked
+  // for. Republishing it is not only waste: an echo arriving after the path
+  // was recreated deletes the new file.
+  std::erase_if(diff.removed, [&tombstones](const auto &entry) -> bool {
+    return tombstones.contains(entry.first);
   });
+  // What is left is this node's own deletion, and nothing else records it.
+  // The file is gone, so there is no timestamp left to read and the moment it
+  // was noticed is what orders it; an old modification time would lose to any
+  // create at all.
+  const auto noticed = std::chrono::system_clock::now();
+  for (const auto &entry : diff.removed) {
+    reconcile::mark(tombstones, entry.first, noticed);
+  }
   return diff;
 }
 
 void forget_spent_marks(const files::file_map_t &current,
                         files::file_map_t &written,
-                        std::set<std::filesystem::path> &deleted) {
+                        reconcile::tombstone_map_t &tombstones) {
   std::erase_if(written, [&current](const auto &entry) -> bool {
     return !current.contains(entry.first);
   });
-  // A path that is present again was never deleted, or has been recreated
-  // since: either way its mark no longer stands for anything.
-  std::erase_if(deleted, [&current](const auto &path) -> bool {
-    return current.contains(path);
-  });
+  // A tombstone is not spent by the event it suppressed. It stands until a
+  // newer file cancels it or it outlives the time to live, because until then
+  // it is the only record a peer that missed the deletion can be repaired
+  // from.
+  reconcile::expire(tombstones, std::chrono::system_clock::now());
 }
 
 auto to_string(lt::torrent_status::state_t s) -> std::string {
@@ -289,9 +316,10 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
 
   auto file_monitor = monitor::Monitor();
   auto inbound = inbound_t{};
-  // Files deleted because a peer asked for it, still waiting for their own
-  // inotify event to arrive.
-  auto deleted = std::set<std::filesystem::path>{};
+  // Every path this node knows to have been deleted, and when. Peer driven
+  // deletions and its own alike: a deletion it does not remember is one it
+  // cannot repair a peer with.
+  auto tombstones = reconcile::tombstone_map_t{};
   auto last_stats = std::chrono::steady_clock::now();
   auto const interval = std::chrono::seconds{2};
   while (stop_requested == 0) {
@@ -307,10 +335,10 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
     if (file_monitor.wait()) {
       file_monitor.discard();
       auto current = files::list();
-      send(local_changes(former, current, inbound.written, deleted), current,
+      send(local_changes(former, current, inbound.written, tombstones), current,
            server);
       former = std::move(current);
-      forget_spent_marks(former, inbound.written, deleted);
+      forget_spent_marks(former, inbound.written, tombstones);
     }
     if (!listener.receive_ready()) {
       continue;
@@ -320,13 +348,7 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
       spdlog::warn(received.error());
       continue;
     }
-    // Read before acting: afterwards there is no telling whether the file was
-    // there to begin with, and a mark for a file we never had would sit around
-    // waiting to swallow a real deletion.
-    const auto removed = protocol::removed_path(received.value());
-    const bool existed = removed && std::filesystem::exists(*removed);
-
-    auto r = protocol::act(received.value(), session);
+    auto r = protocol::act(received.value(), session, tombstones);
     if (!r.has_value()) {
       spdlog::warn(r.error());
       continue;
@@ -334,9 +356,6 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
     spdlog::info(r->message);
     if (r->created) {
       inbound.origins.insert_or_assign(*r->created, r->origin);
-    }
-    if (existed) {
-      deleted.insert(*removed);
     }
   }
   spdlog::info("Stopping.");

@@ -9,8 +9,10 @@ target_link_libraries(source PRIVATE spdlog::spdlog)
 target_link_libraries(source PRIVATE torrent-rasterbar)
 target_link_libraries(source PRIVATE utils)
 
-add_library(protocol STATIC protocol.cpp)
+add_library(protocol STATIC protocol.cpp reconcile.cpp)
 target_include_directories(protocol PUBLIC ${CMAKE_SOURCE_DIR}/include/protocol)
+# The reconciliation speaks in the same path to timestamp map the listing does.
+target_include_directories(protocol PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(protocol PUBLIC cppzmq-static)
 target_link_libraries(protocol PUBLIC torrent-rasterbar)
 target_link_libraries(protocol PRIVATE spdlog::spdlog)

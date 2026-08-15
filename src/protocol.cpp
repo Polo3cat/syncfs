@@ -23,6 +23,7 @@
 #include <zmq.hpp>
 
 #include <protocol.h>
+#include <reconcile.h>
 #include <utils.h>
 
 namespace {
@@ -142,7 +143,8 @@ auto add_nodes(lt::session &s,
 
 namespace protocol {
 
-auto act(const std::vector<zmq::message_t> &v, lt::session &s)
+auto act(const std::vector<zmq::message_t> &v, lt::session &s,
+         reconcile::tombstone_map_t &tombstones)
     -> std::expected<outcome, std::string> {
   if (v.empty()) {
     return std::unexpected{"Wrong protocol length."};
@@ -163,6 +165,11 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s)
       s.remove_torrent(handle);
     }
     std::filesystem::remove(*removed);
+    // Recorded even for a path this node never held: the peer that still
+    // holds it has to be told, and it can only be told by a node that
+    // remembers the deletion.
+    reconcile::mark(tombstones, *removed,
+                    utils::from_ticks(v.at(2).to_string_view()));
     return outcome{.verb = std::string{verb},
                    .message = std::format("Delete \"{}\"", removed->native())};
   }
@@ -172,6 +179,20 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s)
     const auto announced = std::filesystem::path{v.at(3).to_string_view()};
     const auto origin =
         utils::to_file_time(utils::from_ticks(v.at(2).to_string_view()));
+
+    // Delete against create: the deletion wins only if it is strictly newer,
+    // and then the file is neither written nor added to the session. A file
+    // that is newer cancels the deletion instead, so the next deletion of that
+    // path is a fresh one and travels normally.
+    if (const auto grave = tombstones.find(announced);
+        grave != tombstones.end()) {
+      if (reconcile::beats(grave->second, origin)) {
+        return outcome{.verb = std::string{verb},
+                       .message = std::format("Ignore \"{}\", deleted since",
+                                              announced.native())};
+      }
+      tombstones.erase(grave);
+    }
 
     auto torrent = lt::load_torrent_buffer(v.at(1).to_string_view());
     torrent.save_path = save_path_for(announced, file_path(torrent.ti));

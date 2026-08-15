@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -16,6 +17,8 @@
 #include <libtorrent/torrent_flags.hpp>
 #include <libtorrent/torrent_info.hpp>
 #include <protocol.h>
+#include <reconcile.h>
+#include <utils.h>
 #include <zmq.hpp>
 
 namespace {
@@ -40,22 +43,27 @@ auto torrent_buffer(const std::filesystem::path &file,
 
 // A create as source::create() sends it: the torrent, the origin time and the
 // listing key of the file it carries.
+constexpr auto default_time = "1700000000000000000";
+
 auto create_message(const std::vector<char> &buffer,
-                    const std::string &path = "./important_file")
+                    const std::string &path = "./important_file",
+                    const std::string &origin = default_time)
     -> std::vector<zmq::message_t> {
   std::vector<zmq::message_t> parts;
   parts.emplace_back(std::string_view{"create"});
   parts.emplace_back(buffer.data(), buffer.size());
-  parts.emplace_back(std::string_view{"1700000000000000000"});
+  parts.emplace_back(std::string_view{origin});
   parts.emplace_back(std::string_view{path});
   return parts;
 }
 
-auto remove_message(const std::string &path) -> std::vector<zmq::message_t> {
+auto remove_message(const std::string &path,
+                    const std::string &deleted = default_time)
+    -> std::vector<zmq::message_t> {
   std::vector<zmq::message_t> parts;
   parts.emplace_back(std::string_view{"remove"});
   parts.emplace_back(std::string_view{path});
-  parts.emplace_back(std::string_view{"1700000000000000000"});
+  parts.emplace_back(std::string_view{deleted});
   return parts;
 }
 
@@ -102,6 +110,9 @@ protected:
 
   std::filesystem::path previous;
   std::filesystem::path root;
+  // Every act() writes and reads these, so they belong to the run and not to
+  // any one call.
+  reconcile::tombstone_map_t tombstones;
 
   Protocol(Protocol &) = delete;
   Protocol(Protocol &&) = delete;
@@ -115,14 +126,16 @@ TEST_F(Protocol, V35NewTorrentReplacesSamePathTorrent) {
   const auto file = std::filesystem::path{"important_file"};
 
   const auto first = torrent_buffer(file, "Important file content\n");
-  ASSERT_TRUE(protocol::act(create_message(first), session).has_value());
+  ASSERT_TRUE(
+      protocol::act(create_message(first), session, tombstones).has_value());
   ASSERT_EQ(session.get_torrents().size(), 1);
 
   // A file update: same path, different content, therefore a different info
   // hash that add_torrent() would happily add alongside the first one.
   const auto second = torrent_buffer(file, "Different file content entirely\n");
   const auto expected = lt::load_torrent_buffer(second);
-  ASSERT_TRUE(protocol::act(create_message(second), session).has_value());
+  ASSERT_TRUE(
+      protocol::act(create_message(second), session, tombstones).has_value());
 
   const auto torrents = session.get_torrents();
   ASSERT_EQ(torrents.size(), 1);
@@ -136,8 +149,10 @@ TEST_F(Protocol, V35IdenticalTorrentIsNotReadded) {
   const auto buffer = torrent_buffer(file, "Important file content\n");
   const auto expected = lt::load_torrent_buffer(buffer);
 
-  ASSERT_TRUE(protocol::act(create_message(buffer), session).has_value());
-  ASSERT_TRUE(protocol::act(create_message(buffer), session).has_value());
+  ASSERT_TRUE(
+      protocol::act(create_message(buffer), session, tombstones).has_value());
+  ASSERT_TRUE(
+      protocol::act(create_message(buffer), session, tombstones).has_value());
 
   const auto torrents = session.get_torrents();
   ASSERT_EQ(torrents.size(), 1);
@@ -149,13 +164,15 @@ TEST_F(Protocol, V38RemoveDropsTorrentForPath) {
   const auto file = std::filesystem::path{"important_file"};
 
   const auto buffer = torrent_buffer(file, "Important file content\n");
-  ASSERT_TRUE(protocol::act(create_message(buffer), session).has_value());
+  ASSERT_TRUE(
+      protocol::act(create_message(buffer), session, tombstones).has_value());
   ASSERT_EQ(session.get_torrents().size(), 1);
 
   // The wire carries the key files::list() produced, which is the same path
   // the torrent holds normalized.
   ASSERT_TRUE(
-      protocol::act(remove_message("./important_file"), session).has_value());
+      protocol::act(remove_message("./important_file"), session, tombstones)
+          .has_value());
 
   ASSERT_TRUE(session.get_torrents().empty());
   ASSERT_FALSE(std::filesystem::exists(file));
@@ -175,37 +192,42 @@ TEST_F(Protocol, V3PartCountIsPerVerb) {
   auto session = offline_session();
 
   // A create truncated to its torrent used to be a well formed message.
-  ASSERT_EQ(protocol::act(message_of("create", 2), session).error(),
+  ASSERT_EQ(protocol::act(message_of("create", 2), session, tombstones).error(),
             "Wrong protocol length.");
-  ASSERT_EQ(protocol::act(message_of("remove", 2), session).error(),
+  ASSERT_EQ(protocol::act(message_of("remove", 2), session, tombstones).error(),
             "Wrong protocol length.");
-  ASSERT_EQ(protocol::act(message_of("state", 4), session).error(),
+  ASSERT_EQ(protocol::act(message_of("state", 4), session, tombstones).error(),
             "Wrong protocol length.");
-  ASSERT_EQ(protocol::act(message_of("digest", 2), session).error(),
+  ASSERT_EQ(protocol::act(message_of("digest", 2), session, tombstones).error(),
             "Wrong protocol length.");
-  ASSERT_EQ(protocol::act({}, session).error(), "Wrong protocol length.");
+  ASSERT_EQ(protocol::act({}, session, tombstones).error(),
+            "Wrong protocol length.");
 
   // And the counts the interface fixes are accepted.
-  ASSERT_TRUE(protocol::act(message_of("state", 2), session).has_value());
-  ASSERT_TRUE(protocol::act(message_of("digest", 4), session).has_value());
+  ASSERT_TRUE(
+      protocol::act(message_of("state", 2), session, tombstones).has_value());
+  ASSERT_TRUE(
+      protocol::act(message_of("digest", 4), session, tombstones).has_value());
 
   const auto file = std::filesystem::path{"important_file"};
   const auto buffer = torrent_buffer(file, "Important file content\n");
-  ASSERT_TRUE(protocol::act(create_message(buffer), session).has_value());
   ASSERT_TRUE(
-      protocol::act(remove_message("./important_file"), session).has_value());
+      protocol::act(create_message(buffer), session, tombstones).has_value());
+  ASSERT_TRUE(
+      protocol::act(remove_message("./important_file"), session, tombstones)
+          .has_value());
 }
 
 TEST_F(Protocol, V4UnknownVerbIsRejected) {
   auto session = offline_session();
 
-  ASSERT_EQ(protocol::act(message_of("bogus", 2), session).error(),
+  ASSERT_EQ(protocol::act(message_of("bogus", 2), session, tombstones).error(),
             "Wrong protocol verb.");
   // The count is right for a create, the verb still is not.
-  ASSERT_EQ(protocol::act(message_of("update", 4), session).error(),
+  ASSERT_EQ(protocol::act(message_of("update", 4), session, tombstones).error(),
             "Wrong protocol verb.");
   // The verb is judged before the count, so a known verb never reports this.
-  ASSERT_EQ(protocol::act(message_of("state", 3), session).error(),
+  ASSERT_EQ(protocol::act(message_of("state", 3), session, tombstones).error(),
             "Wrong protocol length.");
 }
 
@@ -223,7 +245,8 @@ TEST_F(Protocol, V25SavePathRestoresLostDirectory) {
             "f.txt");
 
   ASSERT_TRUE(
-      protocol::act(create_message(buffer, "./a/f.txt"), session).has_value());
+      protocol::act(create_message(buffer, "./a/f.txt"), session, tombstones)
+          .has_value());
 
   const auto torrents = session.get_torrents();
   ASSERT_EQ(torrents.size(), 1);
@@ -238,15 +261,86 @@ TEST_F(Protocol, V25TorrentIsFoundUnderTheAnnouncedPath) {
 
   const auto buffer = torrent_buffer(file, "Important file content\n");
   ASSERT_TRUE(
-      protocol::act(create_message(buffer, "./a/f.txt"), session).has_value());
+      protocol::act(create_message(buffer, "./a/f.txt"), session, tombstones)
+          .has_value());
   ASSERT_EQ(session.get_torrents().size(), 1);
 
   // The directory lives in the save path now, so finding the torrent again
   // means putting the save path and what the torrent still knows back
   // together.
-  ASSERT_TRUE(protocol::act(remove_message("./a/f.txt"), session).has_value());
+  ASSERT_TRUE(protocol::act(remove_message("./a/f.txt"), session, tombstones)
+                  .has_value());
   ASSERT_TRUE(session.get_torrents().empty());
   ASSERT_FALSE(std::filesystem::exists(file));
+}
+
+TEST_F(Protocol, V37RemoveRecordsTombstoneForAPathNeverHeld) {
+  auto session = offline_session();
+
+  // No file, no torrent: nothing to delete. The deletion is still recorded,
+  // because a peer that still holds the path can only be repaired by a node
+  // that remembers it was deleted.
+  ASSERT_TRUE(protocol::act(remove_message("./never_held"), session, tombstones)
+                  .has_value());
+  ASSERT_EQ(tombstones.at("./never_held"), utils::from_ticks(default_time));
+}
+
+TEST_F(Protocol, V49CreateBeatenByTombstoneIsNotApplied) {
+  auto session = offline_session();
+  const auto file = std::filesystem::path{"important_file"};
+  const auto buffer = torrent_buffer(file, "Important file content\n");
+  std::filesystem::remove(file);
+
+  // Deleted one tick after the file was written, so the deletion wins.
+  ASSERT_TRUE(
+      protocol::act(remove_message("./important_file", "1700000000000000001"),
+                    session, tombstones)
+          .has_value());
+
+  const auto ignored =
+      protocol::act(create_message(buffer), session, tombstones);
+  ASSERT_TRUE(ignored.has_value());
+  ASSERT_TRUE(session.get_torrents().empty());
+  ASSERT_FALSE(std::filesystem::exists(file));
+  ASSERT_FALSE(ignored->created.has_value());
+  // And the deletion still stands, so the next announcement of that file
+  // loses to it as well.
+  ASSERT_TRUE(tombstones.contains("./important_file"));
+}
+
+TEST_F(Protocol, V37NewerCreateDefeatsTheTombstone) {
+  auto session = offline_session();
+  const auto file = std::filesystem::path{"important_file"};
+  const auto buffer = torrent_buffer(file, "Important file content\n");
+
+  // Deleted one tick before the file was written: the file is the newer of
+  // the two and the deletion is spent.
+  ASSERT_TRUE(
+      protocol::act(remove_message("./important_file", "1699999999999999999"),
+                    session, tombstones)
+          .has_value());
+  ASSERT_TRUE(
+      protocol::act(create_message(buffer), session, tombstones).has_value());
+
+  ASSERT_EQ(session.get_torrents().size(), 1);
+  ASSERT_FALSE(tombstones.contains("./important_file"));
+}
+
+TEST_F(Protocol, V37TieKeepsTheFile) {
+  auto session = offline_session();
+  const auto file = std::filesystem::path{"important_file"};
+  const auto buffer = torrent_buffer(file, "Important file content\n");
+
+  // Deleted at the very moment it was written. The unresolvable case biases
+  // towards keeping data.
+  ASSERT_TRUE(
+      protocol::act(remove_message("./important_file"), session, tombstones)
+          .has_value());
+  ASSERT_TRUE(
+      protocol::act(create_message(buffer), session, tombstones).has_value());
+
+  ASSERT_EQ(session.get_torrents().size(), 1);
+  ASSERT_FALSE(tombstones.contains("./important_file"));
 }
 
 TEST_F(Protocol, V7AddedTorrentSavePathAndFlags) {
@@ -254,7 +348,8 @@ TEST_F(Protocol, V7AddedTorrentSavePathAndFlags) {
   const auto file = std::filesystem::path{"important_file"};
 
   const auto buffer = torrent_buffer(file, "Important file content\n");
-  ASSERT_TRUE(protocol::act(create_message(buffer), session).has_value());
+  ASSERT_TRUE(
+      protocol::act(create_message(buffer), session, tombstones).has_value());
 
   const auto torrents = session.get_torrents();
   ASSERT_EQ(torrents.size(), 1);

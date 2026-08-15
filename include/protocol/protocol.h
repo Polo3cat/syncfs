@@ -11,6 +11,8 @@
 #include <libtorrent/torrent_handle.hpp>
 #include <zmq.hpp>
 
+#include <reconcile.h>
+
 namespace protocol {
 
 // Every verb fixes its own part count and this is the largest of them, which
@@ -35,7 +37,11 @@ struct outcome {
   std::filesystem::file_time_type origin{};
 };
 
-auto act(const std::vector<zmq::message_t> &v, lt::session &s)
+// The tombstones travel in because a create and a remove are the two things
+// that write them: a deletion this node is told about has to be recorded, and
+// a file that arrives newer than a deletion cancels it.
+auto act(const std::vector<zmq::message_t> &v, lt::session &s,
+         reconcile::tombstone_map_t &tombstones)
     -> std::expected<outcome, std::string>;
 
 // Where a torrent's single file sits inside the sync root. A v2-only torrent
