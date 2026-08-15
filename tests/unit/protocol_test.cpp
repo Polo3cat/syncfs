@@ -32,7 +32,9 @@ auto torrent_buffer(const std::filesystem::path &file,
       file.lexically_normal(), static_cast<int64_t>(entry.file_size())};
   lt::create_torrent torrent(std::vector{std::move(file_entry)}, 0,
                              lt::create_torrent::v2_only);
-  lt::set_piece_hashes(torrent, file.parent_path());
+  // The entry holds the whole path relative to the sync root, so the hashes
+  // are read from the root and not from the file's own parent (§V.39).
+  lt::set_piece_hashes(torrent, ".");
   return torrent.generate_buf();
 }
 
@@ -205,6 +207,46 @@ TEST_F(Protocol, V4UnknownVerbIsRejected) {
   // The verb is judged before the count, so a known verb never reports this.
   ASSERT_EQ(protocol::act(message_of("state", 3), session).error(),
             "Wrong protocol length.");
+}
+
+TEST_F(Protocol, V25SavePathRestoresLostDirectory) {
+  auto session = offline_session();
+  const auto file = std::filesystem::path{"a"} / "f.txt";
+  std::filesystem::create_directories(file.parent_path());
+
+  const auto buffer = torrent_buffer(file, "Important file content\n");
+  // A v2-only torrent holding one file under one directory loses that
+  // directory on load, so the torrent alone would write the file to "./f.txt".
+  const auto loaded = lt::load_torrent_buffer(buffer);
+  ASSERT_EQ(loaded.ti->layout().file_path(
+                *(loaded.ti->layout().file_range().begin())),
+            "f.txt");
+
+  ASSERT_TRUE(
+      protocol::act(create_message(buffer, "./a/f.txt"), session).has_value());
+
+  const auto torrents = session.get_torrents();
+  ASSERT_EQ(torrents.size(), 1);
+  ASSERT_EQ(std::filesystem::path{torrents.front().status().save_path},
+            std::filesystem::current_path() / "a");
+}
+
+TEST_F(Protocol, V25TorrentIsFoundUnderTheAnnouncedPath) {
+  auto session = offline_session();
+  const auto file = std::filesystem::path{"a"} / "f.txt";
+  std::filesystem::create_directories(file.parent_path());
+
+  const auto buffer = torrent_buffer(file, "Important file content\n");
+  ASSERT_TRUE(
+      protocol::act(create_message(buffer, "./a/f.txt"), session).has_value());
+  ASSERT_EQ(session.get_torrents().size(), 1);
+
+  // The directory lives in the save path now, so finding the torrent again
+  // means putting the save path and what the torrent still knows back
+  // together.
+  ASSERT_TRUE(protocol::act(remove_message("./a/f.txt"), session).has_value());
+  ASSERT_TRUE(session.get_torrents().empty());
+  ASSERT_FALSE(std::filesystem::exists(file));
 }
 
 TEST_F(Protocol, V7AddedTorrentSavePathAndFlags) {

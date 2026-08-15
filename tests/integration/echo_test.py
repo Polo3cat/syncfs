@@ -148,9 +148,24 @@ def test_nested_file_does_not_kill_the_daemon(node_a, node_b, tmp_dir_a):
     assert node_a.creates() != [], "sender never announced the nested file"
 
 
+def test_nested_file_at_depth_one_syncs(node_a, node_b, tmp_dir_a, tmp_dir_b):
+    """V25: a v2-only torrent holding one file under one directory drops that
+    directory on load, so the file used to arrive at the sync root instead of
+    inside it. The announced path carries the directory the load lost."""
+    nested = PosixPath(tmp_dir_a) / "a" / "f.txt"
+    nested.parent.mkdir()
+    nested.write_text("1234")
+
+    time.sleep(expected_sync_delay)
+    assert (PosixPath(tmp_dir_b) / "a" / "f.txt").read_text() == "1234"
+    assert not (PosixPath(tmp_dir_b) / "f.txt").exists(), (
+        "the file lost its directory on the way"
+    )
+
+
 def test_nested_file_at_depth_two_syncs(node_a, node_b, tmp_dir_a, tmp_dir_b):
-    """At depth two the torrent carries the whole path, so the file lands
-    where it belongs. Depth one still loses its directory (§T.21, §B.3)."""
+    """At depth two the torrent carries the whole path itself, so this holds
+    with or without the save path derived from the announced one."""
     nested = PosixPath(tmp_dir_a) / "a" / "b" / "f.txt"
     nested.parent.mkdir(parents=True)
     nested.write_text("1234")

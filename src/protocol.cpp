@@ -16,7 +16,9 @@
 #include <libtorrent/load_torrent.hpp>
 #include <libtorrent/session.hpp>
 #include <libtorrent/torrent_flags.hpp>
+#include <libtorrent/torrent_handle.hpp>
 #include <libtorrent/torrent_info.hpp>
+#include <libtorrent/torrent_status.hpp>
 
 #include <zmq.hpp>
 
@@ -30,16 +32,53 @@ auto file_path(const std::shared_ptr<const lt::torrent_info> &ti)
   return layout.file_path(file_index);
 }
 
-// The torrents serving one file. A torrent carries its path normalized
-// ("a/f"), while the rest of the daemon speaks in listing keys ("./a/f").
+// Where a torrent's single file sits inside the sync root. A v2-only torrent
+// holding one file under one directory drops that directory on load, so what
+// the torrent still knows is only the tail of the path and the rest of it has
+// to be read back out of the save path.
+auto held_path(const std::filesystem::path &root, const std::string &save_path,
+               const std::shared_ptr<const lt::torrent_info> &ti)
+    -> std::filesystem::path {
+  return (std::filesystem::path{save_path}.lexically_relative(root) /
+          file_path(ti))
+      .lexically_normal();
+}
+
+// The directory a torrent has to be written into for its file to land where
+// the sender holds it. Whatever the load dropped is exactly what the save path
+// puts back, so this is the tail of the announced path removed from the whole
+// of it.
+auto save_path_for(const std::filesystem::path &announced,
+                   const std::filesystem::path &in_torrent) -> std::string {
+  const auto whole = announced.lexically_normal().native();
+  const auto tail = in_torrent.lexically_normal().native();
+  if (whole.size() < tail.size() || !whole.ends_with(tail)) {
+    return ".";
+  }
+  auto directory =
+      std::string_view{whole}.substr(0, whole.size() - tail.size());
+  while (directory.ends_with('/')) {
+    directory.remove_suffix(1);
+  }
+  return directory.empty() ? "." : std::string{directory};
+}
+
+// The torrents serving one file, named by the listing key the rest of the
+// daemon speaks in ("./a/f"). One session call answers for every torrent at
+// once, which a per-handle lookup of the save path would not.
 auto torrents_at(lt::session &s, const std::filesystem::path &path)
     -> std::vector<lt::torrent_handle> {
   const auto wanted = path.lexically_normal();
+  const auto root = std::filesystem::current_path();
   std::vector<lt::torrent_handle> found;
-  for (const auto &handle : s.get_torrents()) {
-    const auto info = handle.torrent_file();
-    if (info && std::filesystem::path{file_path(info)} == wanted) {
-      found.push_back(handle);
+  const auto all =
+      s.get_torrent_status([](const auto &) -> bool { return true; },
+                           lt::torrent_handle::query_save_path |
+                               lt::torrent_handle::query_torrent_file);
+  for (const auto &status : all) {
+    const auto info = status.torrent_file.lock();
+    if (info && held_path(root, status.save_path, info) == wanted) {
+      found.push_back(status.handle);
     }
   }
   return found;
@@ -52,8 +91,9 @@ auto torrents_at(lt::session &s, const std::filesystem::path &path)
 // Identical announcements are left alone, since removing and re-adding them
 // would only force a recheck and drop the swarm.
 void remove_stale_torrents(lt::session &s,
+                           const std::filesystem::path &announced,
                            const lt::add_torrent_params &added) {
-  for (const auto &handle : torrents_at(s, file_path(added.ti))) {
+  for (const auto &handle : torrents_at(s, announced)) {
     const auto info = handle.torrent_file();
     if (info->info_hashes() == added.ti->info_hashes()) {
       continue;
@@ -125,11 +165,14 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s)
     return std::format("Delete \"{}\"", removed->native());
   }
   if (verb == "create") {
+    // The announced path is the whole of it; the torrent may only still know
+    // its tail, so the two together decide where the file is written.
+    const auto announced = std::filesystem::path{v.at(3).to_string_view()};
     auto torrent = lt::load_torrent_buffer(v.at(1).to_string_view());
-    torrent.save_path = ".";
+    torrent.save_path = save_path_for(announced, file_path(torrent.ti));
     torrent.flags = lt::torrent_flags::auto_managed;
 
-    remove_stale_torrents(s, torrent);
+    remove_stale_torrents(s, announced, torrent);
 
     auto handle = s.add_torrent(torrent);
 
@@ -138,7 +181,7 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s)
     handle.force_dht_announce();
 
     const auto *state = "Added nodes for";
-    return std::format("{} \"{}\"{}", state, file_path(handle.torrent_file()),
+    return std::format("{} \"{}\"{}", state, announced.native(),
                        nodes.empty() ? "" : nodes);
   }
   // state and digest belong to the reconciliation, which reads them once it

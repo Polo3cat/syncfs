@@ -172,7 +172,7 @@ T20|x|`src/monitor.cpp:24` watches `.` only, ⊥ recursive, but `files::list` is
 T16|.|V2 relies on `assert` ∴ vanishes under `NDEBUG`. promote to real check. §B.5 = the release build silently peerless|V2,B5
 T17|.|alert loop logs `alert->message()` @ debug but default `alert_mask` hides peer & DHT categories ∴ blind during B1 triage. widen mask|R2,R3
 T18|.|node & file count ceiling undocumented|C
-T21|.|v2-only torrent @ relative path depth 1 loses top dir on receiver. wire correct, load wrong. fix: carry relative path as 3rd wire part & derive `save_path`, or nest tree ≥ 2 deep|V25,B3
+T21|x|v2-only torrent @ relative path depth 1 loses top dir on receiver. wire correct, load wrong. fix: carry relative path as 3rd wire part & derive `save_path`, or nest tree ≥ 2 deep|V25,B3
 T22|.|`src/syncfs.cpp:193` usage prints `syncf`, binary is `syncfs`|I
 T23|x|`src/syncfs.cpp:236` `zmq::error_t` catch logs & falls off end of `main` — ⊥ `return EXIT_FAILURE` ∴ exit code 0 on fatal ZMQ error|V28,B4
 T24|.|`src/syncfs.cpp:97` `t.torrent_file.lock()` passed straight to `file_path`, deref'd unchecked. expired weak_ptr → nullptr deref in stats print|V29
