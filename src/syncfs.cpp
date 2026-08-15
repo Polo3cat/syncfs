@@ -214,6 +214,24 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
   // synchornize multiple directories into the same on the remote.
   settings.set_bool(lt::settings_pack::allow_multiple_connections_per_ip, true);
 
+  // Every torrent is added auto managed, and the queueing defaults are meant
+  // for a user downloading a handful of things at a time: three downloads and
+  // five seeds active, rotated every thirty seconds. One file is one torrent
+  // here, so those defaults cap the whole daemon at three files per rotation,
+  // and with thousands of files the small active sets of sender and receiver
+  // stop overlapping altogether and no swarm ever forms. Unlimited queues let
+  // every announced file move at once.
+  const int unlimited = -1;
+  settings.set_int(lt::settings_pack::active_downloads, unlimited);
+  settings.set_int(lt::settings_pack::active_seeds, unlimited);
+  settings.set_int(lt::settings_pack::active_limit, unlimited);
+
+  // Lifting the queue limits is pointless while the connection limit stays at
+  // its default of 200: one file is one torrent and every torrent holds its
+  // own connection to every peer, so the limit is reached long before the
+  // files are. Non-positive means as many as the file descriptor limit allows.
+  settings.set_int(lt::settings_pack::connections_limit, unlimited);
+
   // status carries torrent_finished_alert and storage carries
   // cache_flushed_alert, the pair that tells us a file has reached disk.
   settings.set_int(lt::settings_pack::alert_mask,
