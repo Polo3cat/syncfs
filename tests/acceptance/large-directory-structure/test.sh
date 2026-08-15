@@ -26,12 +26,29 @@ done; done; done
 
 echo "Done generating random dirs and files"
 
-sleep 60
+EXPECTED=$(find data-A -type f | wc -l)
+
+# Poll instead of guessing: every peer is done once it holds as many files as
+# the sender. The deadline is generous because each file is its own torrent and
+# every one of them has to be announced, discovered and fetched.
+DEADLINE=$((SECONDS + 900))
+while ((SECONDS < DEADLINE)); do
+	pending=0
+	for dir in data-{B,C,D,E}; do
+		[[ $(find "$dir" -type f | wc -l) -eq $EXPECTED ]] || pending=1
+	done
+	((pending == 0)) && break
+	sleep 5
+done
+
+echo "Waited $((SECONDS)) seconds for $EXPECTED files to reach every peer"
 
 TMP=$(mktemp -d --tmpdir test-XXXXX)
 
+# The node directory is stripped so that the sums compare content and relative
+# path only, which is what synchronization means here.
 for dir in data-*; do
-	find "$dir" -type f -print | sort | xargs sha1sum > "${TMP}/sum-$dir"
+	(cd "$dir" && find . -type f -print | sort | xargs sha1sum) > "${TMP}/sum-$dir"
 done
 
 for dir in "${TMP}"/sum-data-{B,C,D,E}; do
