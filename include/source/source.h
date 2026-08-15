@@ -47,6 +47,15 @@ struct Source {
   // in full. Only ever published on a hash mismatch, so what is an expensive
   // message in principle is one nobody sends while the peers agree.
   void digest(std::string_view held, std::string_view deleted) const;
+
+  // The announcement this node last saw for a path, said again. Nothing is
+  // read off disk and nothing is hashed: hashing a holder's whole tree inside
+  // the sync loop is the cost that made a one gigabyte file miss its deadline
+  // once already, and the session cannot rebuild the announcement it was
+  // added from.
+  void repair(const std::filesystem::path &file,
+              std::filesystem::file_time_type mtime,
+              std::string_view bencoded) const;
 };
 
 template <Iterable T> void Source::create(const T &container) const {

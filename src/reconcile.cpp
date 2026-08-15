@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <random>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -177,5 +178,49 @@ auto gaps(const files::file_map_t &mine, const tombstone_map_t &tombstones,
     }
   }
   return found;
+}
+
+auto repair_window(size_t gaps) -> std::chrono::milliseconds {
+  // Twenty milliseconds a gap, which puts a thousand of them just under a
+  // minute: the same order as the time the files themselves take to move, and
+  // far enough past the second and a half a swarm needs merely to finish
+  // subscribing for a peer's repair to be seen before this node's own is due.
+  constexpr auto per_gap = std::chrono::milliseconds{20};
+  constexpr auto shortest = std::chrono::milliseconds{1000};
+  constexpr auto longest = std::chrono::milliseconds{60000};
+  return std::clamp(per_gap * static_cast<std::int64_t>(gaps), shortest,
+                    longest);
+}
+
+Backoff::Backoff() : generator{std::random_device{}()} {}
+
+auto Backoff::draw(std::chrono::milliseconds window)
+    -> std::chrono::milliseconds {
+  std::uniform_int_distribution<std::int64_t> spread{window.count() / 2,
+                                                     window.count()};
+  return std::chrono::milliseconds{spread(generator)};
+}
+
+void arm(pending_map_t &pending,
+         const std::vector<std::filesystem::path> &missing,
+         std::chrono::steady_clock::time_point now, Backoff &backoff) {
+  const auto window = repair_window(missing.size());
+  for (const auto &path : missing) {
+    pending.try_emplace(path, now + backoff.draw(window));
+  }
+}
+
+auto due(pending_map_t &pending, std::chrono::steady_clock::time_point now)
+    -> std::vector<std::filesystem::path> {
+  std::vector<std::filesystem::path> ready;
+  for (const auto &[path, at] : pending) {
+    if (at <= now) {
+      ready.push_back(path);
+    }
+  }
+  for (const auto &path : ready) {
+    pending.erase(path);
+  }
+  return ready;
 }
 } // namespace reconcile

@@ -3,10 +3,13 @@
 #include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include <libtorrent/info_hash.hpp>
 #include <libtorrent/session.hpp>
 #include <libtorrent/torrent_handle.hpp>
 #include <zmq.hpp>
@@ -35,13 +38,27 @@ struct outcome {
   std::string message;
   std::optional<std::filesystem::path> created;
   std::filesystem::file_time_type origin{};
+  lt::info_hash_t content;
 };
+
+// What this node last applied for a path: the moment the copy it holds was
+// written at its origin, and what that copy's content hashes to. The session
+// cannot answer this. Between a local edit and the moment that edit's own
+// announcement comes back round, the torrent for the path is still the one
+// for the content before it, and comparing against that would have a node
+// refuse its own edit.
+struct applied_t {
+  std::filesystem::file_time_type origin;
+  lt::info_hash_t content;
+};
+
+using applied_map_t = std::map<std::filesystem::path, applied_t>;
 
 // The tombstones travel in because a create and a remove are the two things
 // that write them: a deletion this node is told about has to be recorded, and
 // a file that arrives newer than a deletion cancels it.
 auto act(const std::vector<zmq::message_t> &v, lt::session &s,
-         reconcile::tombstone_map_t &tombstones)
+         reconcile::tombstone_map_t &tombstones, const applied_map_t &applied)
     -> std::expected<outcome, std::string>;
 
 // Where a torrent's single file sits inside the sync root. A v2-only torrent

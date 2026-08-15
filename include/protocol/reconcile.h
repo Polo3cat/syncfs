@@ -1,8 +1,10 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <map>
+#include <random>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -83,5 +85,40 @@ auto adoptable(const tombstone_map_t &theirs, const files::file_map_t &held,
 // so a node with a gap has no way of asking anyone for anything.
 auto gaps(const files::file_map_t &mine, const tombstone_map_t &tombstones,
           const files::file_map_t &theirs)
+    -> std::vector<std::filesystem::path>;
+
+// The repairs this node has agreed to make and the moment each is due. Every
+// holder of a gap arms one, and every one of them cancels on seeing another
+// holder's repair land, so nobody has to be elected and the liveness of the
+// whole thing rests on no single peer.
+using pending_map_t =
+    std::map<std::filesystem::path, std::chrono::steady_clock::time_point>;
+
+// How long the holders spread their repairs over. It has to grow with the
+// number of gaps: a repair is only cancelled by one that is *observed*, and a
+// receiver drains one torrent per loop iteration, so at a thousand gaps
+// nothing is observed inside a fixed second and every holder answers every
+// gap, which is the storm the delay exists to prevent.
+auto repair_window(size_t gaps) -> std::chrono::milliseconds;
+
+// The randomized wait itself, drawn from the second half of the window. Equal
+// peers have nothing but randomization to tell them apart.
+struct Backoff {
+  std::mt19937 generator;
+
+  Backoff();
+  auto draw(std::chrono::milliseconds window) -> std::chrono::milliseconds;
+};
+
+// Takes on every gap not already waiting. Re-arming one that is would push its
+// moment back every round and it would never arrive.
+void arm(pending_map_t &pending,
+         const std::vector<std::filesystem::path> &missing,
+         std::chrono::steady_clock::time_point now, Backoff &backoff);
+
+// The repairs whose wait is over, taken out of the map as they are handed
+// back. An unrepaired gap needs no backoff engine to try again: it turns up
+// in the next digest.
+auto due(pending_map_t &pending, std::chrono::steady_clock::time_point now)
     -> std::vector<std::filesystem::path>;
 } // namespace reconcile

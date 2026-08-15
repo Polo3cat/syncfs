@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -105,6 +106,36 @@ void remove_stale_torrents(lt::session &s,
   }
 }
 
+// Whether an announced file beats the copy already here. Newer wins, whatever
+// the copy here came from. On a tie the lower info hash wins, which is a
+// property of the content and so the only thing both ends can agree on from
+// the message alone: neither a create nor a remove carries a sender.
+//
+// A tie is only settled that way when this node knows which announcement its
+// copy came from and that announcement describes the file it has now. A copy
+// it cannot account for is one it is not seeding, so taking the announcement
+// is how it starts.
+auto wins(const protocol::applied_map_t &applied,
+          const std::filesystem::path &announced,
+          std::filesystem::file_time_type origin,
+          const lt::torrent_info &incoming) -> bool {
+  std::error_code err;
+  const auto here = std::filesystem::last_write_time(announced, err);
+  if (err) {
+    return true;
+  }
+  const auto theirs = utils::to_ticks(origin);
+  const auto ours = utils::to_ticks(here);
+  if (theirs != ours) {
+    return theirs > ours;
+  }
+  const auto known = applied.find(announced);
+  if (known == applied.end() || utils::to_ticks(known->second.origin) != ours) {
+    return true;
+  }
+  return !(known->second.content < incoming.info_hashes());
+}
+
 // The part count is a property of the verb, not of the wire: a blanket check
 // would let a create truncated to its torrent through, and reject the very
 // message that carries an origin time.
@@ -144,7 +175,7 @@ auto add_nodes(lt::session &s,
 namespace protocol {
 
 auto act(const std::vector<zmq::message_t> &v, lt::session &s,
-         reconcile::tombstone_map_t &tombstones)
+         reconcile::tombstone_map_t &tombstones, const applied_map_t &applied)
     -> std::expected<outcome, std::string> {
   if (v.empty()) {
     return std::unexpected{"Wrong protocol length."};
@@ -190,6 +221,19 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s,
     }
 
     auto torrent = lt::load_torrent_buffer(v.at(1).to_string_view());
+    const auto content = torrent.ti->info_hashes();
+
+    // Create against create. Under repair the same path is announced over and
+    // over, and last received wins is an oscillator: two nodes holding
+    // different copies would each apply the other's every round, for ever.
+    // Which of the two is newer settles it, and the tie is settled by content
+    // rather than by identity, because neither message carries a sender.
+    if (!wins(applied, announced, origin, *torrent.ti)) {
+      return outcome{.verb = std::string{verb},
+                     .message = std::format("Ignore \"{}\", not newer",
+                                            announced.native())};
+    }
+
     torrent.save_path = save_path_for(announced, file_path(torrent.ti));
     torrent.flags = lt::torrent_flags::auto_managed;
 
@@ -207,7 +251,8 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s,
                        std::format("{} \"{}\"{}", state, announced.native(),
                                    nodes.empty() ? "" : nodes),
                    .created = announced,
-                   .origin = origin};
+                   .origin = origin,
+                   .content = content};
   }
   // state and digest belong to the reconciliation, which reads them for
   // itself once the verb has been judged well formed here.

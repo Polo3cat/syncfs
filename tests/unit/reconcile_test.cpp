@@ -197,3 +197,46 @@ TEST(Reconcile, V43GapsAreTheHoldersToRepair) {
   ASSERT_EQ(found, (std::vector<std::filesystem::path>{"./newer_here",
                                                        "./only_here"}));
 }
+
+TEST(Reconcile, V51WindowScalesWithGapCount) {
+  // A repair is only cancelled by one that is observed, and a receiver drains
+  // one torrent per loop iteration, so a fixed second is already too short at
+  // a few dozen gaps: nothing would be seen inside it, nobody would stand
+  // down, and every holder would answer every gap.
+  ASSERT_LT(reconcile::repair_window(1), reconcile::repair_window(1000));
+  ASSERT_LT(reconcile::repair_window(100), reconcile::repair_window(1000));
+  // With a floor, so that a single gap is still spread over something.
+  ASSERT_GE(reconcile::repair_window(1), std::chrono::seconds{1});
+  // And a ceiling, so that it always ends.
+  ASSERT_LE(reconcile::repair_window(1000000), std::chrono::seconds{60});
+}
+
+TEST(Reconcile, V43ArmedRepairsFireOnceAndOnlyWhenDue) {
+  const auto now = std::chrono::steady_clock::now();
+  auto pending = reconcile::pending_map_t{};
+  auto backoff = reconcile::Backoff{};
+
+  reconcile::arm(pending, {"./a", "./b"}, now, backoff);
+  ASSERT_EQ(pending.size(), 2);
+  // Drawn from the second half of the window, so nothing is due at once.
+  ASSERT_TRUE(reconcile::due(pending, now).empty());
+
+  const auto fired = reconcile::due(pending, now + reconcile::repair_window(2));
+  ASSERT_EQ(fired.size(), 2);
+  // And taken out as they are handed over, so a repair goes out once. An
+  // unrepaired gap needs no retry engine: it turns up in the next digest.
+  ASSERT_TRUE(pending.empty());
+}
+
+TEST(Reconcile, V43ArmingAgainDoesNotPushTheMomentBack) {
+  const auto now = std::chrono::steady_clock::now();
+  auto pending = reconcile::pending_map_t{};
+  auto backoff = reconcile::Backoff{};
+
+  reconcile::arm(pending, {"./a"}, now, backoff);
+  const auto due_at = pending.at("./a");
+  // The same gap turns up in every digest until it is closed. Re-arming it
+  // would move its moment along every round and it would never arrive.
+  reconcile::arm(pending, {"./a"}, now + std::chrono::seconds{1}, backoff);
+  ASSERT_EQ(pending.at("./a"), due_at);
+}

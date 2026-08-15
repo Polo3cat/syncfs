@@ -235,6 +235,38 @@ auto to_string(lt::torrent_status::state_t s) -> std::string {
   }
 }
 
+// The repairs this node has taken on, and the source of the randomized wait
+// that keeps every holder of the same gap from answering at once.
+struct repairs_t {
+  reconcile::pending_map_t pending;
+  reconcile::Backoff backoff;
+  // What this node last applied for each path, which is what an announcement
+  // for that path is judged against.
+  protocol::applied_map_t applied;
+  // The announcement each path was last seen with, which is what a repair
+  // says again. The session cannot rebuild it and reading the file to hash it
+  // afresh is what a repair exists to avoid.
+  std::map<std::filesystem::path, std::string> announcements;
+};
+
+// Hands over the repairs whose wait is up. A path this node has no
+// announcement for cannot be repaired from here, and saying so is better than
+// dropping it in silence: after a restart a node holds its files and none of
+// their announcements, and it is another holder that answers for them.
+void publish_repairs(repairs_t &repairs, const source::Source &server,
+                     const files::file_map_t &former,
+                     std::chrono::steady_clock::time_point now) {
+  for (const auto &path : reconcile::due(repairs.pending, now)) {
+    const auto announcement = repairs.announcements.find(path);
+    const auto mtime = former.find(path);
+    if (announcement == repairs.announcements.end() || mtime == former.end()) {
+      spdlog::debug("Nothing to repair \"{}\" with", path.native());
+      continue;
+    }
+    server.repair(path, mtime->second, announcement->second);
+  }
+}
+
 // What a peer's digest asks of this node. The deletions it carries that this
 // node never heard are taken on, and any file here that loses to one of them
 // goes: a node that never saw the remove would otherwise mismatch the root
@@ -243,7 +275,7 @@ auto to_string(lt::torrent_status::state_t s) -> std::string {
 // files this node holds and the peer does not, which are its to repair.
 void read_digest(const std::vector<zmq::message_t> &v, lt::session &session,
                  files::file_map_t &former,
-                 reconcile::tombstone_map_t &tombstones) {
+                 reconcile::tombstone_map_t &tombstones, repairs_t &repairs) {
   const auto held = reconcile::decode_held(v.at(2).to_string_view());
   const auto deleted = reconcile::decode_tombstones(v.at(3).to_string_view());
 
@@ -258,9 +290,16 @@ void read_digest(const std::vector<zmq::message_t> &v, lt::session &session,
     }
   }
 
+  // Whoever holds a file the peer lacks is the one that repairs it: PUB/SUB
+  // has no request path, so the node with the gap cannot ask anyone. Every
+  // holder waits a randomized while and drops its own repair on seeing
+  // another's, so nobody is elected and the whole thing keeps working with
+  // any one of them wedged.
   const auto missing = reconcile::gaps(former, tombstones, held);
   if (!missing.empty()) {
     spdlog::info("{} paths to repair for a peer", missing.size());
+    reconcile::arm(repairs.pending, missing, std::chrono::steady_clock::now(),
+                   repairs.backoff);
   }
 }
 
@@ -291,7 +330,8 @@ void reconcile_message(std::string_view verb,
                        const std::vector<zmq::message_t> &v,
                        lt::session &session, const source::Source &server,
                        files::file_map_t &former,
-                       reconcile::tombstone_map_t &tombstones) {
+                       reconcile::tombstone_map_t &tombstones,
+                       repairs_t &repairs) {
   // A root hash that differs means one of the two is missing something and
   // neither knows what. Both answer with a full digest: on a mismatch each
   // side's is information the other needs, so there is nothing to suppress.
@@ -302,30 +342,49 @@ void reconcile_message(std::string_view verb,
     return;
   }
   if (verb == "digest" && v.at(1).to_string_view() != server.endpoint) {
-    read_digest(v, session, former, tombstones);
+    read_digest(v, session, former, tombstones, repairs);
   }
 }
 
 // One inbound message, from the wire to whatever it asks of this node.
 void receive_one(const sink::Sink &listener, lt::session &session,
                  const source::Source &server, files::file_map_t &former,
-                 reconcile::tombstone_map_t &tombstones, inbound_t &inbound) {
+                 reconcile::tombstone_map_t &tombstones, inbound_t &inbound,
+                 repairs_t &repairs) {
   auto const received = listener.receive(protocol::max_parts);
   if (!received.has_value()) {
     spdlog::warn(received.error());
     return;
   }
-  auto r = protocol::act(received.value(), session, tombstones);
+  auto r =
+      protocol::act(received.value(), session, tombstones, repairs.applied);
   if (!r.has_value()) {
     spdlog::warn(r.error());
     return;
   }
   spdlog::info(r->message);
+  if (const auto gone = protocol::removed_path(received.value())) {
+    repairs.announcements.erase(*gone);
+    repairs.applied.erase(*gone);
+    repairs.pending.erase(*gone);
+  }
   if (r->created) {
     inbound.origins.insert_or_assign(*r->created, r->origin);
+    // Every create this node applies passes here, its own included: it
+    // subscribes to itself, so this is the one place the announcement for a
+    // path is known whoever made it.
+    repairs.announcements.insert_or_assign(*r->created,
+                                           received->at(1).to_string());
+    repairs.applied.insert_or_assign(
+        *r->created,
+        protocol::applied_t{.origin = r->origin, .content = r->content});
+    // And another holder getting there first is what stands this node's own
+    // repair down, which is what keeps the duplicates far below the number of
+    // holders.
+    repairs.pending.erase(*r->created);
   }
   reconcile_message(r->verb, received.value(), session, server, former,
-                    tombstones);
+                    tombstones, repairs);
 }
 
 auto torrent_states(const lt::session &s) -> std::vector<lt::torrent_status> {
@@ -430,6 +489,7 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
   // deletions and its own alike: a deletion it does not remember is one it
   // cannot repair a peer with.
   auto tombstones = reconcile::tombstone_map_t{};
+  auto repairs = repairs_t{};
   auto last_stats = std::chrono::steady_clock::now();
   auto const interval = std::chrono::seconds{2};
   // The last time anything happened to the sync directory, whether this node
@@ -466,8 +526,10 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
       last_state = now;
       server.state(reconcile::hash(former, tombstones));
     }
+    publish_repairs(repairs, server, former, now);
     if (listener.receive_ready()) {
-      receive_one(listener, session, server, former, tombstones, inbound);
+      receive_one(listener, session, server, former, tombstones, inbound,
+                  repairs);
     }
   }
   spdlog::info("Stopping.");

@@ -29,6 +29,25 @@ auto torrent_from_file(const std::filesystem::directory_entry &file)
   lt::set_piece_hashes(torrent, ".");
   return torrent;
 }
+
+// Puts a create on the wire. The origin time travels beside the torrent
+// rather than inside it: libtorrent would fold it into the info dictionary,
+// and then identical content written at two different moments would hash
+// differently.
+void announce(zmq::socket_t &client, std::string_view bencoded_torrent,
+              std::filesystem::file_time_type mtime,
+              const std::filesystem::path &file) {
+  const auto origin = std::format("{}", utils::to_ticks(mtime));
+  const auto &path = file.native();
+
+  client.send(zmq::str_buffer("create"), zmq::send_flags::sndmore);
+  client.send(
+      zmq::const_buffer(bencoded_torrent.data(), bencoded_torrent.size()),
+      zmq::send_flags::sndmore);
+  client.send(zmq::const_buffer(origin.data(), origin.size()),
+              zmq::send_flags::sndmore);
+  client.send(zmq::const_buffer(path.data(), path.size()));
+}
 } // namespace
 
 namespace source {
@@ -46,21 +65,18 @@ void Source::create(const std::filesystem::path &file,
 
   auto torrent = torrent_from_file(entry);
   torrent.add_node(addr);
-  auto bencoded_torrent = torrent.generate_buf();
+  const auto bencoded = torrent.generate_buf();
+  announce(client, {bencoded.data(), bencoded.size()}, mtime, file);
+}
 
-  // The origin time travels beside the torrent rather than inside it:
-  // libtorrent would fold it into the info dictionary, and then identical
-  // content written at two different moments would hash differently.
-  const auto origin = std::format("{}", utils::to_ticks(mtime));
-  const auto &path = file.native();
+void Source::repair(const std::filesystem::path &file,
+                    std::filesystem::file_time_type mtime,
+                    std::string_view bencoded) const {
+  spdlog::debug("-> Repair {}", file.native());
 
-  client.send(zmq::str_buffer("create"), zmq::send_flags::sndmore);
-  client.send(
-      zmq::const_buffer(bencoded_torrent.data(), bencoded_torrent.size()),
-      zmq::send_flags::sndmore);
-  client.send(zmq::const_buffer(origin.data(), origin.size()),
-              zmq::send_flags::sndmore);
-  client.send(zmq::const_buffer(path.data(), path.size()));
+  // The very bytes the path was last announced with, so the info hash is the
+  // one every peer already knows and a duplicate repair costs nothing.
+  announce(client, bencoded, mtime, file);
 }
 
 void Source::remove(const std::filesystem::path &file) const {
