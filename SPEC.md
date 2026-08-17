@@ -176,7 +176,7 @@ V61: ∀ `lt::session` → `dht_bootstrap_nodes` set empty ∴ the DHT starts @ 
 id|status|task|cites
 T1|x|fix `syncfs-update` non-convergence|V17,B1
 T2|x|`source_test.cpp` asserted on `num_files()`, got 2 — pad. now asserts v2 `file tree`|V5,V24,B2
-T3|.|`perf_one_to_one_gb_file_test` red — 1 GiB in 30 s budget, reaches 57%. Sender hashes whole file in `lt::set_piece_hashes`, synchronous, blocks sync loop|C,V20
+T3|x|`perf_one_to_one_gb_file_test` red — 1 GiB in 30 s budget, reaches 57%. Sender hashes whole file in `lt::set_piece_hashes`, synchronous, blocks sync loop|C,V20
 T4|.|`tests/integration/many_syncfs_test.py:69` `test_one_syncf_sends_to_many_other` has ⊥ assert. loop breaks either way, test can never fail|V18
 T5|x|downloader writes file → own inotify fires → republishes identical content → duplicate info hash, wasted hash & traffic. suppress echo|V13,R5,V36
 T6|.|integration tests wait fixed `time.sleep`. flaky & slow. poll until deadline|V18,V19
