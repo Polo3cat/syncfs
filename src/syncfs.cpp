@@ -89,8 +89,15 @@ void send(const diff_t &diff, const files::file_map_t &current,
   announce(diff.modified);
 }
 
+// The name to print for one torrent. The metadata may already be gone: the
+// status list is taken as a snapshot and the rows are formatted afterwards, so
+// a torrent removed in between leaves its weak_ptr expired. A debug print is
+// not worth a null dereference, and the row still carries its counters.
 auto file_path(const std::shared_ptr<const lt::torrent_info> &ti)
     -> std::string {
+  if (!ti) {
+    return "<gone>";
+  }
   const auto &layout = ti->layout();
   auto file_index = *(layout.file_range().begin());
   return layout.file_path(file_index);
