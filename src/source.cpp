@@ -98,13 +98,24 @@ void Source::state(std::string_view hashes) const {
   spdlog::debug("-> State");
 
   client.send(zmq::str_buffer("state"), zmq::send_flags::sndmore);
-  client.send(zmq::const_buffer(hashes.data(), hashes.size()));
+  client.send(zmq::const_buffer(hashes.data(), hashes.size()),
+              zmq::send_flags::sndmore);
+  // Whoever finds this hash differs from their own answers with a digest, and
+  // this is the address they answer to.
+  client.send(zmq::const_buffer(endpoint.data(), endpoint.size()));
 }
 
-void Source::digest(std::string_view held, std::string_view deleted) const {
-  spdlog::debug("-> Digest");
+void Source::digest(utils::Endpoint target, std::string_view held,
+                    std::string_view deleted) const {
+  spdlog::debug("-> Digest to {}", target.value);
 
-  client.send(zmq::str_buffer("digest"), zmq::send_flags::sndmore);
+  // The verb and the one endpoint this digest is for, each closed by a NUL. The
+  // publisher matches it against its subscriptions, so no other peer sees the
+  // message at all.
+  const auto addressed = utils::address("digest", target);
+
+  client.send(zmq::const_buffer(addressed.data(), addressed.size()),
+              zmq::send_flags::sndmore);
   client.send(zmq::const_buffer(endpoint.data(), endpoint.size()),
               zmq::send_flags::sndmore);
   client.send(zmq::const_buffer(held.data(), held.size()),

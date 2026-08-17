@@ -7,7 +7,8 @@ target_include_directories(source PUBLIC ${CMAKE_SOURCE_DIR}/include/source)
 target_link_libraries(source PUBLIC cppzmq-static)
 target_link_libraries(source PRIVATE spdlog::spdlog)
 target_link_libraries(source PRIVATE torrent-rasterbar)
-target_link_libraries(source PRIVATE utils)
+# source.h names utils::Endpoint, so whoever includes it needs utils too.
+target_link_libraries(source PUBLIC utils)
 
 add_library(protocol STATIC protocol.cpp reconcile.cpp)
 target_include_directories(protocol PUBLIC ${CMAKE_SOURCE_DIR}/include/protocol)

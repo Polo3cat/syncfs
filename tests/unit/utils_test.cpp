@@ -3,6 +3,8 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <utils.h>
 
@@ -40,6 +42,39 @@ TEST(Utils, UnreadableTicksAreTheEpoch) {
   ASSERT_EQ(utils::from_ticks("not a time"), epoch);
   ASSERT_EQ(utils::from_ticks("17000000 "), epoch);
   ASSERT_EQ(utils::from_ticks("17000000x"), epoch);
+}
+
+TEST(Utils, V58AddressFramesVerbAndEndpoint) {
+  using namespace std::string_view_literals;
+
+  // Byte exact, both NULs included. A subscriber asks for the whole of this and
+  // the publisher matches it against the first part of every message, so the
+  // two ends have to spell it identically or an addressed message reaches
+  // nobody.
+  ASSERT_EQ(utils::address("digest", utils::Endpoint{"tcp://127.0.0.1:5555"}),
+            "digest\0tcp://127.0.0.1:5555\0"sv);
+
+  // And the trailing one is what the framing is for: without it the shorter
+  // port is a prefix of the longer and the node on 555 receives everything
+  // meant for the node on 5555.
+  const auto shorter =
+      utils::address("digest", utils::Endpoint{"tcp://127.0.0.1:555"});
+  const auto longer =
+      utils::address("digest", utils::Endpoint{"tcp://127.0.0.1:5555"});
+  ASSERT_FALSE(std::string_view{longer}.starts_with(shorter));
+}
+
+TEST(Utils, V58VerbIsWhatStandsBeforeTheFirstNul) {
+  using namespace std::string_view_literals;
+
+  ASSERT_EQ(utils::verb_of("digest\0tcp://127.0.0.1:5555\0"sv), "digest"sv);
+  // A broadcast verb is spelled plainly, and the same reading has to answer for
+  // it: the part count is looked up once, whichever form arrived.
+  ASSERT_EQ(utils::verb_of("create"sv), "create"sv);
+  ASSERT_EQ(utils::verb_of(""sv), ""sv);
+  // An address whose endpoint is empty still names its verb, and the verb is
+  // all the count depends on.
+  ASSERT_EQ(utils::verb_of("state\0\0"sv), "state"sv);
 }
 
 TEST(Utils, V44StampSetsOriginMtime) {

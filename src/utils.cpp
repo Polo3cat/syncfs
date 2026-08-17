@@ -51,6 +51,18 @@ auto utils::to_file_time(std::chrono::system_clock::time_point t)
   return std::chrono::file_clock::from_sys(t);
 }
 
+auto utils::address(std::string_view verb, Endpoint at) -> std::string {
+  auto framed = std::string{verb};
+  framed.push_back('\0');
+  framed.append(at.value);
+  framed.push_back('\0');
+  return framed;
+}
+
+auto utils::verb_of(std::string_view part0) -> std::string_view {
+  return part0.substr(0, part0.find('\0'));
+}
+
 auto utils::stamp(const std::filesystem::path &p,
                   std::filesystem::file_time_type t) -> bool {
   std::error_code err;

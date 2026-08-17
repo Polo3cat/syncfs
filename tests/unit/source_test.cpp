@@ -46,12 +46,15 @@ struct Wire {
   zmq::socket_t publisher;
   zmq::socket_t subscriber;
 
-  Wire(const std::string &address, const std::string &verb)
+  // The prefix is a bare verb for a broadcast message and the whole framed
+  // address for one addressed at a single node, and it may hold NULs either
+  // way, so it is set by size and never as a C string.
+  Wire(const std::string &address, const std::string &prefix)
       : publisher{publisher_ctx, zmq::socket_type::pub},
         subscriber{subscriber_ctx, zmq::socket_type::sub} {
     publisher.bind(address);
     subscriber.connect(address);
-    subscriber.set(zmq::sockopt::subscribe, verb);
+    subscriber.set(zmq::sockopt::subscribe, prefix);
     subscriber.set(zmq::sockopt::rcvtimeo, poll_ms);
   }
 };
@@ -70,6 +73,23 @@ auto announce_until_received(zmq::socket_t &subscriber,
     }
   }
   return false;
+}
+
+// The other direction, for a message this socket must never be handed. Only
+// worth anything once the subscription is known to be live, so every use of it
+// here follows a message that did arrive over the same pair.
+template <size_t N, typename Announce>
+auto never_received(zmq::socket_t &subscriber,
+                    std::array<zmq::message_t, N> &parts, Announce announce)
+    -> bool {
+  constexpr int tries = 20;
+  for (int attempt = 0; attempt < tries; ++attempt) {
+    announce();
+    if (zmq::recv_multipart_n(subscriber, parts.begin(), parts.size())) {
+      return false;
+    }
+  }
+  return true;
 }
 } // namespace
 
@@ -170,6 +190,86 @@ TEST_F(TempFile, V48CreateCarriesOriginMtimeAndPath) {
             std::to_string(utils::to_ticks(mtime)));
   // The path the sender holds it under, which the receiver writes it to.
   ASSERT_EQ(recv_msgs.at(3).to_string(), this->file.native());
+}
+
+TEST(Source, V56StateCarriesSenderAddress) {
+  constexpr auto source_address = 3003;
+  const auto endpoint = std::string{"tcp://127.0.0.1:3003"};
+  Wire wire{endpoint, "state"};
+  auto sender =
+      source::Source(std::move(wire.publisher),
+                     std::pair{"127.0.0.1", source_address}, endpoint);
+
+  const auto hashes = std::string{"32 bytes of root hash, more or less"};
+
+  std::array<zmq::message_t, 3> recv_msgs{};
+  ASSERT_TRUE(announce_until_received(wire.subscriber, recv_msgs,
+                                      [&] -> void { sender.state(hashes); }));
+
+  ASSERT_EQ(recv_msgs.at(0).to_string_view(), "state"sv);
+  ASSERT_EQ(recv_msgs.at(1).to_string(), hashes);
+  // Whoever finds the hash differs from their own answers with a digest, and
+  // this is the only thing in the message that says where to.
+  ASSERT_EQ(recv_msgs.at(2).to_string(), endpoint);
+}
+
+TEST(Source, V56DigestIsAddressedToOnePeer) {
+  constexpr auto source_address = 3004;
+  const auto endpoint = std::string{"tcp://127.0.0.1:3004"};
+  const auto target = std::string{"tcp://127.0.0.1:9001"};
+  // The subscriber asks for digests addressed at one endpoint and nothing else,
+  // so a broadcast digest would never reach it at all.
+  Wire wire{endpoint, utils::address("digest", utils::Endpoint{target})};
+  auto sender =
+      source::Source(std::move(wire.publisher),
+                     std::pair{"127.0.0.1", source_address}, endpoint);
+
+  // The canonical form the reconciliation speaks in: every entry a path and a
+  // tick count, each closed by a NUL.
+  const auto held = std::string{"./f"} + '\0' + "1700" + '\0';
+  const auto deleted = std::string{"./g"} + '\0' + "1800" + '\0';
+
+  std::array<zmq::message_t, 4> recv_msgs{};
+  ASSERT_TRUE(announce_until_received(wire.subscriber, recv_msgs, [&] -> void {
+    sender.digest(utils::Endpoint{target}, held, deleted);
+  }));
+
+  ASSERT_EQ(recv_msgs.at(0).to_string(),
+            utils::address("digest", utils::Endpoint{target}));
+  // The reply address stays part1: the repair and the next round's digest both
+  // go back to whoever asked.
+  ASSERT_EQ(recv_msgs.at(1).to_string(), endpoint);
+  ASSERT_EQ(recv_msgs.at(2).to_string(), held);
+  ASSERT_EQ(recv_msgs.at(3).to_string(), deleted);
+}
+
+TEST(Source, V58TrailingNulPreventsPortPrefixMatch) {
+  constexpr auto source_address = 3005;
+  const auto endpoint = std::string{"tcp://127.0.0.1:3005"};
+  const auto shorter = std::string{"tcp://127.0.0.1:555"};
+  const auto longer = std::string{"tcp://127.0.0.1:5555"};
+  Wire wire{endpoint, utils::address("digest", utils::Endpoint{shorter})};
+  auto sender =
+      source::Source(std::move(wire.publisher),
+                     std::pair{"127.0.0.1", source_address}, endpoint);
+
+  // Its own digest first, which is what proves the pair is connected: a socket
+  // that receives nothing because it never finished subscribing would pass the
+  // half below for the wrong reason.
+  std::array<zmq::message_t, 4> recv_msgs{};
+  ASSERT_TRUE(announce_until_received(wire.subscriber, recv_msgs, [&] -> void {
+    sender.digest(utils::Endpoint{shorter}, "", "");
+  }));
+  ASSERT_EQ(recv_msgs.at(0).to_string(),
+            utils::address("digest", utils::Endpoint{shorter}));
+
+  // And now the neighbour's. Without the NUL closing the endpoint the shorter
+  // port is a prefix of the longer one, and this node would take every digest
+  // meant for the node on 5555.
+  std::array<zmq::message_t, 4> stray{};
+  ASSERT_TRUE(never_received(wire.subscriber, stray, [&] -> void {
+    sender.digest(utils::Endpoint{longer}, "", "");
+  }));
 }
 
 TEST_F(TempFile, RemoveCarriesDeleteTime) {

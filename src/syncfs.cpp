@@ -333,14 +333,19 @@ void reconcile_message(std::string_view verb,
                        reconcile::tombstone_map_t &tombstones,
                        repairs_t &repairs) {
   // A root hash that differs means one of the two is missing something and
-  // neither knows what. Both answer with a full digest: on a mismatch each
-  // side's is information the other needs, so there is nothing to suppress.
+  // neither knows what. The answer is a full digest, addressed back at the node
+  // whose hash it was: broadcasting it would hand every other peer the same
+  // O(M) message for nothing, every round, for as long as the two disagree.
   if (verb == "state") {
     if (v.at(1).to_string_view() != reconcile::hash(former, tombstones)) {
-      server.digest(reconcile::encode(former), reconcile::encode(tombstones));
+      server.digest(utils::Endpoint{v.at(2).to_string_view()},
+                    reconcile::encode(former), reconcile::encode(tombstones));
     }
     return;
   }
+  // A node subscribes only to digests addressed at itself, so a peer's never
+  // arrives here. Its own still can: the state it published a moment ago comes
+  // back to it, and if the tree moved in between it answers itself.
   if (verb == "digest" && v.at(1).to_string_view() != server.endpoint) {
     read_digest(v, session, former, tombstones, repairs);
   }
@@ -572,8 +577,13 @@ auto main(int argc, char *argv[]) -> int try {
 
   zmq::context_t ctx;
 
+  // Where this node publishes, which it needs before it subscribes to anything:
+  // a digest is addressed, and the only digests this node asks for are the ones
+  // addressed at it.
+  const auto my_address = std::format("tcp://{}", args[2]);
+
   zmq::socket_t listener{ctx, zmq::socket_type::sub};
-  protocol::subscribe(listener);
+  protocol::subscribe(listener, my_address);
   // A publisher silently discards messages for a subscriber whose queue is
   // full, and the default queue is a thousand messages. One announcement per
   // file means a directory of a few thousand files overruns it long before the
@@ -587,7 +597,6 @@ auto main(int argc, char *argv[]) -> int try {
     spdlog::info("Subscribed to {}", peer);
   }
 
-  const auto my_address = std::format("tcp://{}", args[2]);
   listener.connect(my_address);
   spdlog::info("Subscribed to {} (myself)", my_address);
 

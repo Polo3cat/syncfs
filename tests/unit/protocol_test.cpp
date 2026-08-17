@@ -75,16 +75,23 @@ auto remove_message(const std::string &path,
   return parts;
 }
 
-// A message of n parts under the given verb, to say something about the count
-// alone without saying anything about the payload.
-auto message_of(const std::string &verb, size_t parts)
+// A message of n parts under the given first part, to say something about the
+// count alone without saying anything about the payload.
+auto message_of(const std::string &part0, size_t parts)
     -> std::vector<zmq::message_t> {
   std::vector<zmq::message_t> message;
-  message.emplace_back(std::string_view{verb});
+  message.emplace_back(std::string_view{part0});
   while (message.size() < parts) {
     message.emplace_back(std::string_view{"payload"});
   }
   return message;
+}
+
+// The same, under a first part addressed at one endpoint: the verb, the
+// endpoint, and a NUL closing each.
+auto addressed_message_of(const std::string &verb, const std::string &endpoint,
+                          size_t parts) -> std::vector<zmq::message_t> {
+  return message_of(utils::address(verb, utils::Endpoint{endpoint}), parts);
 }
 
 // A session that touches no network: the unit tests only care about what the
@@ -213,6 +220,10 @@ TEST_F(Protocol, V3PartCountIsPerVerb) {
   ASSERT_EQ(protocol::act(message_of("remove", 2), session, tombstones, applied)
                 .error(),
             "Wrong protocol length.");
+  // A state without its sender address is a hash nobody can answer.
+  ASSERT_EQ(protocol::act(message_of("state", 2), session, tombstones, applied)
+                .error(),
+            "Wrong protocol length.");
   ASSERT_EQ(protocol::act(message_of("state", 4), session, tombstones, applied)
                 .error(),
             "Wrong protocol length.");
@@ -224,7 +235,7 @@ TEST_F(Protocol, V3PartCountIsPerVerb) {
 
   // And the counts the interface fixes are accepted.
   ASSERT_TRUE(
-      protocol::act(message_of("state", 2), session, tombstones, applied)
+      protocol::act(message_of("state", 3), session, tombstones, applied)
           .has_value());
   ASSERT_TRUE(
       protocol::act(message_of("digest", 4), session, tombstones, applied)
@@ -251,9 +262,42 @@ TEST_F(Protocol, V4UnknownVerbIsRejected) {
                 .error(),
             "Wrong protocol verb.");
   // The verb is judged before the count, so a known verb never reports this.
-  ASSERT_EQ(protocol::act(message_of("state", 3), session, tombstones, applied)
+  ASSERT_EQ(protocol::act(message_of("state", 2), session, tombstones, applied)
                 .error(),
             "Wrong protocol length.");
+}
+
+TEST_F(Protocol, V58AddressedDigestIsReadAsItsVerb) {
+  auto session = offline_session();
+
+  // The first part of an addressed digest is the verb and the endpoint it is
+  // meant for. Comparing the whole of it against the verb table finds nothing,
+  // so every digest a peer addressed here would be thrown away as a verb nobody
+  // knows, and the reconciliation would never exchange anything.
+  const auto addressed =
+      addressed_message_of("digest", "tcp://127.0.0.1:5555", 4);
+  const auto r = protocol::act(addressed, session, tombstones, applied);
+  ASSERT_TRUE(r.has_value());
+  ASSERT_EQ(r->verb, "digest");
+
+  // The count is still the verb's own, and still judged.
+  ASSERT_EQ(
+      protocol::act(addressed_message_of("digest", "tcp://127.0.0.1:5555", 3),
+                    session, tombstones, applied)
+          .error(),
+      "Wrong protocol length.");
+}
+
+TEST_F(Protocol, V58UnknownVerbBeforeTheNulIsStillRejected) {
+  auto session = offline_session();
+
+  // Splitting the first part is not a licence to accept whatever stands before
+  // the NUL: what the address buys is that the verb can be found at all.
+  ASSERT_EQ(
+      protocol::act(addressed_message_of("bogus", "tcp://127.0.0.1:5555", 4),
+                    session, tombstones, applied)
+          .error(),
+      "Wrong protocol verb.");
 }
 
 TEST_F(Protocol, V25SavePathRestoresLostDirectory) {

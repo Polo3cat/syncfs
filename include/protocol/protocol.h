@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <libtorrent/info_hash.hpp>
@@ -22,12 +23,11 @@ namespace protocol {
 // is all a receiver needs to know before it has read the verb.
 inline constexpr size_t max_parts = 4;
 
-inline void subscribe(zmq::socket_t &s) {
-  s.set(zmq::sockopt::subscribe, "create");
-  s.set(zmq::sockopt::subscribe, "remove");
-  s.set(zmq::sockopt::subscribe, "state");
-  s.set(zmq::sockopt::subscribe, "digest");
-}
+// What this node asks the wire for. The data verbs and the root hash are
+// broadcast and subscribed plainly; a digest is addressed at one node, so what
+// is subscribed is the whole framed prefix and no other node's digest ever
+// reaches this socket at all (V58).
+void subscribe(zmq::socket_t &s, std::string_view endpoint);
 
 // What act() did, for a caller that has to follow up on it. The verb comes
 // back because the reconciliation reads state and digest for itself, and the

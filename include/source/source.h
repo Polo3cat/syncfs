@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <iterator>
 #include <string_view>
+#include <utils.h>
 #include <zmq.hpp>
 
 namespace source {
@@ -17,9 +18,9 @@ concept Pair = requires(T t) {
 struct Source {
   mutable zmq::socket_t client;
   std::pair<std::string, int> addr;
-  // Where this node publishes, in the form the peers file uses. It rides on a
-  // digest so a receiver can tell one of its own from a peer's, which is the
-  // only message that needs telling apart: everything else is idempotent.
+  // Where this node publishes, in the form the peers file uses. It rides on
+  // both reconcile verbs: a root hash nobody can answer is worth nothing, and
+  // the digest that answers it is the reply.
   std::string endpoint;
 
   explicit Source(zmq::socket_t &&client,
@@ -40,13 +41,17 @@ struct Source {
   // The root hash of everything this node holds and everything it knows to
   // have been deleted, so a peer can tell in 32 bytes whether the two of them
   // agree. A list of hashes rather than one, because splitting it into buckets
-  // later is then a change of length and not a change of format.
+  // later is then a change of length and not a change of format. Broadcast, and
+  // it names this node: a hash whose sender is anonymous cannot be answered.
   void state(std::string_view hashes) const;
 
   // Everything this node holds and everything it knows to have been deleted,
-  // in full. Only ever published on a hash mismatch, so what is an expensive
-  // message in principle is one nobody sends while the peers agree.
-  void digest(std::string_view held, std::string_view deleted) const;
+  // in full, addressed at the one peer whose root hash differed. Broadcasting
+  // it costs every other peer a message of the same size for nothing, every
+  // round, for as long as the two of them disagree. A digest is bookkeeping, so
+  // unlike a repair there is nothing in it for a second reader.
+  void digest(utils::Endpoint target, std::string_view held,
+              std::string_view deleted) const;
 
   // The announcement this node last saw for a path, said again. Nothing is
   // read off disk and nothing is hashed: hashing a holder's whole tree inside

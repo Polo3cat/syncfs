@@ -149,11 +149,16 @@ constexpr size_t remove_parts = 3;
 constexpr std::array<verb_t, 4> verbs{
     {{.name = "create", .parts = 4},
      {.name = "remove", .parts = remove_parts},
-     {.name = "state", .parts = 2},
+     {.name = "state", .parts = 3},
      {.name = "digest", .parts = 4}}};
 
-auto parts_for(std::string_view verb) -> std::optional<size_t> {
-  const auto *found = std::ranges::find(verbs, verb, &verb_t::name);
+// The first part carries the verb and, for an addressed one, the endpoint it is
+// meant for. Comparing the whole of it would have every addressed digest report
+// a verb nobody knows, so the verb is what stands before the first NUL (V3,
+// V58).
+auto parts_for(std::string_view part0) -> std::optional<size_t> {
+  const auto *found =
+      std::ranges::find(verbs, utils::verb_of(part0), &verb_t::name);
   if (found == verbs.end()) {
     return std::nullopt;
   }
@@ -174,15 +179,27 @@ auto add_nodes(lt::session &s,
 
 namespace protocol {
 
+void subscribe(zmq::socket_t &s, std::string_view endpoint) {
+  s.set(zmq::sockopt::subscribe, "create");
+  s.set(zmq::sockopt::subscribe, "remove");
+  s.set(zmq::sockopt::subscribe, "state");
+  // Addressed, and framed at both ends: the publisher matches this against the
+  // first part of every digest and writes it to this pipe alone. Subscribing to
+  // the bare verb here would take every peer's digest as well, which is the
+  // whole of what V56 is about.
+  s.set(zmq::sockopt::subscribe,
+        utils::address("digest", utils::Endpoint{endpoint}));
+}
+
 auto act(const std::vector<zmq::message_t> &v, lt::session &s,
          reconcile::tombstone_map_t &tombstones, const applied_map_t &applied)
     -> std::expected<outcome, std::string> {
   if (v.empty()) {
     return std::unexpected{"Wrong protocol length."};
   }
-  const auto verb = v.at(0).to_string_view();
+  const auto verb = utils::verb_of(v.at(0).to_string_view());
   // The verb has to be read before the length can be judged at all.
-  const auto parts = parts_for(verb);
+  const auto parts = parts_for(v.at(0).to_string_view());
   if (!parts.has_value()) {
     return std::unexpected{"Wrong protocol verb."};
   }
@@ -286,7 +303,8 @@ auto held_path(const lt::torrent_handle &h)
 
 auto removed_path(const std::vector<zmq::message_t> &v)
     -> std::optional<std::filesystem::path> {
-  if (v.size() != remove_parts || v.at(0).to_string_view() != "remove") {
+  if (v.size() != remove_parts ||
+      utils::verb_of(v.at(0).to_string_view()) != "remove") {
     return std::nullopt;
   }
   return std::filesystem::path{v.at(1).to_string_view()};
