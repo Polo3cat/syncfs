@@ -52,6 +52,12 @@ def peers_b() -> Generator[str, Any, Any]:
 
 log_time = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{6})")
 
+# One row of the statistics table the daemon prints at debug every two seconds:
+# a file name, a progress to two decimals, and the counters after it. The table
+# is written as a single message with the rows embedded, so a row carries no log
+# prefix of its own.
+torrent_row = re.compile(r"^[^\t]*\t\t\d+\.\d\d\t\t\d+\t\t\d+\t\d+\t\S+$")
+
 
 def stamp(line: str) -> datetime | None:
     """The moment a log line was written, or nothing for a line that carries
@@ -92,6 +98,12 @@ class Node:
 
     def creates(self) -> list[str]:
         return [line for line in self.lines() if "-> Create" in line]
+
+    def torrent_rows(self) -> list[str]:
+        """The rows of the debug statistics table, one per torrent the session
+        holds. The header carries no numbers, so only real torrents match, and
+        a node holding none prints the header alone."""
+        return [line for line in self.lines() if torrent_row.match(line)]
 
 
 def start(peers: str, addr: str, cwd: str) -> Node:
@@ -327,3 +339,122 @@ def test_v41_v52_late_joiner_is_repaired(tmp_dir_a, tmp_dir_b, tmp_dir_c):
         "the announcements were repaired, but not inside the control plane's "
         "own deadline"
     )
+
+
+# A block of its own. This test stops and starts nodes on the same addresses,
+# so it cannot share ports with anything else in the module.
+restart_a_addr = "localhost:5210"
+restart_b_addr = "localhost:5211"
+restart_c_addr = "localhost:5212"
+
+restarted_files = 8
+
+# Two ticks of the statistics table, so that a torrent added just before the
+# stop has been printed at least once. Without it the assertion would be about
+# when the daemon last spoke rather than about what it was holding.
+stats_settle = 5
+
+
+def restarted_written() -> dict[str, str]:
+    """What the two writers lay down between them, some at the sync root and
+    some a directory deep."""
+    return {
+        f"{n % 2}/g{n:02}" if n % 2 else f"g{n:02}": f"content of file {n}\n"
+        for n in range(restarted_files)
+    }
+
+
+def write_all(where: str, contents: dict[str, str]) -> None:
+    for name, text in contents.items():
+        path = PosixPath(where) / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+
+def test_v55_v60_a_restarted_swarm_repairs_a_late_joiner(
+    tmp_dir_a, tmp_dir_b, tmp_dir_c
+):
+    """V55 and V60: the announcement cache fills only where a create is
+    applied, and a node coming back up applies none for the files it already
+    has. So every holder in a swarm that has been restarted holds its whole
+    tree and remembers not one announcement, and until one of them rebuilds an
+    announcement off disk it can repair nobody: the gap re-arms every round and
+    never closes.
+
+    T50 cannot see this. Its writers create the files inside the test, so every
+    holder's cache is warm by construction, which is exactly the case a restart
+    is not.
+
+    And the rebuilt announcement goes out broadcast rather than at the node
+    that asked. A restarted node adds no torrent for what the listing already
+    found, so it seeds nothing until an announcement for the path reaches it;
+    a repair aimed only at the asker would leave the swarm one node wide.
+    """
+    peers_a = peers_file(restart_b_addr, restart_c_addr)
+    peers_b = peers_file(restart_a_addr, restart_c_addr)
+    peers_c = peers_file(restart_a_addr, restart_b_addr)
+
+    contents = restarted_written()
+    half = len(contents) // 2
+    first = dict(list(contents.items())[:half])
+    second = dict(list(contents.items())[half:])
+
+    node_a = start(peers_a, restart_a_addr, tmp_dir_a)
+    node_b = start(peers_b, restart_b_addr, tmp_dir_b)
+    node_c = None
+    try:
+        # A publisher drops whatever it sends before its subscribers have
+        # finished connecting, and the first exchange is not what is on trial.
+        time.sleep(1)
+        write_all(tmp_dir_a, first)
+        write_all(tmp_dir_b, second)
+
+        assert wait_for(
+            lambda: all(
+                (PosixPath(tmp_dir_a) / name).is_file()
+                and (PosixPath(tmp_dir_b) / name).is_file()
+                for name in contents
+            ),
+            60,
+        ), "the two writers never agreed in the first place"
+
+        # Down and back up on the same directories, which is what a container
+        # restart is. Each comes back holding every file, with no torrent in
+        # its session and no announcement in its cache.
+        node_a.stop()
+        node_b.stop()
+        node_a = start(peers_a, restart_a_addr, tmp_dir_a)
+        node_b = start(peers_b, restart_b_addr, tmp_dir_b)
+        time.sleep(1)
+
+        # None of this was ever addressed at this node, and no holder has an
+        # announcement left to hand it.
+        node_c = start(peers_c, restart_c_addr, tmp_dir_c)
+
+        converged = wait_for(
+            lambda: all(
+                (PosixPath(tmp_dir_c) / name).is_file()
+                and (PosixPath(tmp_dir_c) / name).read_text() == text
+                for name, text in contents.items()
+            ),
+            convergence_budget,
+        )
+        time.sleep(stats_settle)
+    finally:
+        node_a.stop()
+        node_b.stop()
+        if node_c is not None:
+            node_c.stop()
+
+    assert converged, (
+        "the late joiner never got the files: every holder had restarted, so "
+        "not one of them had a cached announcement to repair it with"
+    )
+
+    # V60: broadcast, so both restarted holders load the rebuilt torrent and
+    # seed again, not only the one the late joiner happened to ask.
+    for name, node in (("A", node_a), ("B", node_b)):
+        assert node.torrent_rows(), (
+            f"restarted node {name} held no torrent at all, so it was seeding "
+            "nothing and the late joiner pulled from a swarm one node wide"
+        )
