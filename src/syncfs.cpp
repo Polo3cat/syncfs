@@ -468,6 +468,15 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
   // files are. Non-positive means as many as the file descriptor limit allows.
   settings.set_int(lt::settings_pack::connections_limit, unlimited);
 
+  // No public DHT router. The default one is a host on the internet, and while
+  // the list is not empty libtorrent will not start its DHT at all until that
+  // name resolves, then keeps talking to a router it may never reach; the
+  // shutdown is what waits all of that out, which is where seconds of a five
+  // second stop budget were going. Peers do not come from there anyway: the
+  // peer set is static and every announcement carries the endpoint of the node
+  // that made it, which is what the DHT is seeded from.
+  settings.set_str(lt::settings_pack::dht_bootstrap_nodes, "");
+
   // status carries torrent_finished_alert and storage carries
   // cache_flushed_alert, the pair that tells us a file has reached disk.
   settings.set_int(lt::settings_pack::alert_mask,
