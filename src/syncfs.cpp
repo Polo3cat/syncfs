@@ -235,22 +235,46 @@ auto to_string(lt::torrent_status::state_t s) -> std::string {
   }
 }
 
-// Hands over the repairs whose wait is up. A path this node has no
-// announcement for cannot be repaired from here, and saying so is better than
-// dropping it in silence: after a restart a node holds its files and none of
-// their announcements, and it is another holder that answers for them.
+// Hands over the repairs whose wait is up.
+//
+// A path with no announcement in hand is read off disk and hashed afresh, which
+// is the very cost a repair exists to avoid, so at most one of them goes per
+// iteration and the rest stay waiting. Dropping them instead is what left every
+// file held across a restart unrepairable for ever: the cache fills only where
+// a create is applied, and a node coming back up applies none for what it
+// already has, so the gap re-armed every round and never closed.
+//
+// Either way the answer is a broadcast create, so every node that loads it
+// seeds it again rather than only the one that asked (V55, V60).
 void publish_repairs(protocol::repairs_t &repairs, const source::Source &server,
                      const files::file_map_t &former,
                      std::chrono::steady_clock::time_point now) {
+  bool rebuilt = false;
+  std::vector<std::filesystem::path> waiting;
   for (const auto &path : reconcile::due(repairs.pending, now)) {
-    const auto announcement = repairs.announcements.find(path);
     const auto mtime = former.find(path);
-    if (announcement == repairs.announcements.end() || mtime == former.end()) {
+    if (mtime == former.end()) {
+      // Gone from the listing since the gap was taken on, so there is nothing
+      // here to repair anyone with any more.
       spdlog::debug("Nothing to repair \"{}\" with", path.native());
       continue;
     }
-    server.repair(path, mtime->second, announcement->second);
+    if (const auto announcement = repairs.announcements.find(path);
+        announcement != repairs.announcements.end()) {
+      server.repair(path, mtime->second, announcement->second);
+      continue;
+    }
+    if (rebuilt) {
+      waiting.push_back(path);
+      continue;
+    }
+    spdlog::debug("Rebuilding the announcement for \"{}\"", path.native());
+    // Broadcast, and this node subscribes to itself, so the announcement comes
+    // back round and the cache holds it from here on.
+    server.create(path, mtime->second);
+    rebuilt = true;
   }
+  reconcile::arm(repairs.pending, waiting, now);
 }
 
 // What a peer's digest asks of this node. The deletions it carries that this
