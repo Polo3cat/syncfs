@@ -23,6 +23,7 @@
 
 #include <zmq.hpp>
 
+#include <files.h>
 #include <protocol.h>
 #include <reconcile.h>
 #include <utils.h>
@@ -308,6 +309,33 @@ auto removed_path(const std::vector<zmq::message_t> &v)
     return std::nullopt;
   }
   return std::filesystem::path{v.at(1).to_string_view()};
+}
+
+void repairs_t::forget(const std::filesystem::path &path) {
+  announcements.erase(path);
+  applied.erase(path);
+  pending.erase(path);
+}
+
+auto adopt(lt::session &s, const reconcile::tombstone_map_t &theirs,
+           files::file_map_t &former, reconcile::tombstone_map_t &mine,
+           repairs_t &repairs, reconcile::time_point now)
+    -> std::vector<std::filesystem::path> {
+  std::vector<std::filesystem::path> deleted;
+  for (const auto &[path, at] :
+       reconcile::adoptable(theirs, former, mine, now)) {
+    reconcile::mark(mine, path, at);
+    if (former.erase(path) == 0) {
+      continue;
+    }
+    erase(s, path);
+    // The listing no longer has the path, so nothing will ever look at what the
+    // repair cache still remembers it by, and nothing would ever drop it
+    // either.
+    repairs.forget(path);
+    deleted.push_back(path);
+  }
+  return deleted;
 }
 
 } // namespace protocol

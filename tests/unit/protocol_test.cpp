@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include <files.h>
 #include <gtest/gtest.h>
 #include <libtorrent/create_torrent.hpp>
 #include <libtorrent/info_hash.hpp>
@@ -522,6 +523,75 @@ TEST_F(Protocol, V37TieKeepsTheFile) {
 
   ASSERT_EQ(session.get_torrents().size(), 1);
   ASSERT_FALSE(tombstones.contains("./important_file"));
+}
+
+TEST_F(Protocol, V57AdoptionForgetsEveryTraceOfAPath) {
+  auto session = offline_session();
+  const auto file = std::filesystem::path{"important_file"};
+  const auto key = std::filesystem::path{"./important_file"};
+  const auto buffer = torrent_buffer(file, "Important file content\n");
+
+  const auto held =
+      protocol::act(create_message(buffer), session, tombstones, applied);
+  ASSERT_TRUE(held.has_value());
+  ASSERT_TRUE(held->created.has_value());
+
+  // Everything receive_one() records for an applied create, so that what
+  // adoption is asked to clean up is what the daemon would actually be holding.
+  auto former = files::file_map_t{
+      {key, utils::to_file_time(utils::from_ticks(default_time))}};
+  auto repairs = protocol::repairs_t{};
+  repairs.announcements.insert_or_assign(
+      key, std::string{buffer.data(), buffer.size()});
+  repairs.applied.insert_or_assign(
+      key,
+      protocol::applied_t{.origin = held->origin, .content = held->content});
+  repairs.pending.insert_or_assign(key, std::chrono::steady_clock::now());
+
+  // A peer's digest carries a deletion this node never heard, one tick newer
+  // than the copy it holds, so the file loses and goes. Read a tick after that,
+  // since a deletion already past the time to live here is not one to take on.
+  const auto theirs = reconcile::tombstone_map_t{
+      {key, utils::from_ticks("1700000000000000001")}};
+  const auto now = utils::from_ticks("1700000000000000002");
+
+  const auto deleted =
+      protocol::adopt(session, theirs, former, tombstones, repairs, now);
+
+  ASSERT_EQ(deleted, std::vector<std::filesystem::path>{key});
+  ASSERT_TRUE(former.empty());
+  ASSERT_TRUE(session.get_torrents().empty());
+  ASSERT_FALSE(std::filesystem::exists(file));
+  ASSERT_TRUE(tombstones.contains(key));
+  // The path is gone from the listing, so nothing will ever read what the
+  // repair cache still remembers it by and nothing would ever drop it either:
+  // a bencoded torrent leaked for the life of the process.
+  ASSERT_FALSE(repairs.announcements.contains(key));
+  ASSERT_FALSE(repairs.applied.contains(key));
+  ASSERT_FALSE(repairs.pending.contains(key));
+}
+
+TEST_F(Protocol, V57AdoptionLeavesAPathItDidNotDeleteAlone) {
+  auto session = offline_session();
+  const auto key = std::filesystem::path{"./important_file"};
+
+  // A deletion this node has already got is not adopted, so nothing about the
+  // path changes and its repair state is not something to throw away.
+  auto former = files::file_map_t{
+      {key, utils::to_file_time(utils::from_ticks(default_time))}};
+  auto repairs = protocol::repairs_t{};
+  repairs.announcements.insert_or_assign(key, "bencoded");
+  reconcile::mark(tombstones, key, utils::from_ticks(default_time));
+
+  const auto theirs =
+      reconcile::tombstone_map_t{{key, utils::from_ticks(default_time)}};
+  const auto deleted =
+      protocol::adopt(session, theirs, former, tombstones, repairs,
+                      utils::from_ticks(default_time));
+
+  ASSERT_TRUE(deleted.empty());
+  ASSERT_TRUE(former.contains(key));
+  ASSERT_TRUE(repairs.announcements.contains(key));
 }
 
 TEST_F(Protocol, V7AddedTorrentSavePathAndFlags) {

@@ -235,24 +235,11 @@ auto to_string(lt::torrent_status::state_t s) -> std::string {
   }
 }
 
-// The repairs this node has taken on, paced so that thousands of them do not
-// go out in one loop iteration.
-struct repairs_t {
-  reconcile::pending_map_t pending;
-  // What this node last applied for each path, which is what an announcement
-  // for that path is judged against.
-  protocol::applied_map_t applied;
-  // The announcement each path was last seen with, which is what a repair
-  // says again. The session cannot rebuild it and reading the file to hash it
-  // afresh is what a repair exists to avoid.
-  std::map<std::filesystem::path, std::string> announcements;
-};
-
 // Hands over the repairs whose wait is up. A path this node has no
 // announcement for cannot be repaired from here, and saying so is better than
 // dropping it in silence: after a restart a node holds its files and none of
 // their announcements, and it is another holder that answers for them.
-void publish_repairs(repairs_t &repairs, const source::Source &server,
+void publish_repairs(protocol::repairs_t &repairs, const source::Source &server,
                      const files::file_map_t &former,
                      std::chrono::steady_clock::time_point now) {
   for (const auto &path : reconcile::due(repairs.pending, now)) {
@@ -274,19 +261,17 @@ void publish_repairs(repairs_t &repairs, const source::Source &server,
 // files this node holds and the peer does not, which are its to repair.
 void read_digest(const std::vector<zmq::message_t> &v, lt::session &session,
                  files::file_map_t &former,
-                 reconcile::tombstone_map_t &tombstones, repairs_t &repairs) {
+                 reconcile::tombstone_map_t &tombstones,
+                 protocol::repairs_t &repairs) {
   const auto held = reconcile::decode_held(v.at(2).to_string_view());
   const auto deleted = reconcile::decode_tombstones(v.at(3).to_string_view());
 
   // Adoption comes first. The other order would have this node repair a file
   // back to the very peer that has just said the file is dead.
-  for (const auto &[path, at] : reconcile::adoptable(
-           deleted, former, tombstones, std::chrono::system_clock::now())) {
-    reconcile::mark(tombstones, path, at);
-    if (former.erase(path) > 0) {
-      protocol::erase(session, path);
-      spdlog::info("Delete \"{}\", a peer had it deleted", path.native());
-    }
+  for (const auto &path :
+       protocol::adopt(session, deleted, former, tombstones, repairs,
+                       std::chrono::system_clock::now())) {
+    spdlog::info("Delete \"{}\", a peer had it deleted", path.native());
   }
 
   // This digest was addressed here and nowhere else, so what is left over is
@@ -335,7 +320,7 @@ void reconcile_message(std::string_view verb,
                        lt::session &session, std::string_view own_endpoint,
                        files::file_map_t &former,
                        reconcile::tombstone_map_t &tombstones,
-                       repairs_t &repairs, rounds_t &rounds) {
+                       protocol::repairs_t &repairs, rounds_t &rounds) {
   // A root hash is filed away, not answered. Answering every one of them is
   // N-1 digests arriving at every publisher every round, and a whole-tree hash
   // computed once per message to decide it; the round asks one peer instead,
@@ -361,7 +346,7 @@ void reconcile_message(std::string_view verb,
 void receive_one(const sink::Sink &listener, lt::session &session,
                  std::string_view own_endpoint, files::file_map_t &former,
                  reconcile::tombstone_map_t &tombstones, inbound_t &inbound,
-                 repairs_t &repairs, rounds_t &rounds) {
+                 protocol::repairs_t &repairs, rounds_t &rounds) {
   auto const received = listener.receive(protocol::max_parts);
   if (!received.has_value()) {
     spdlog::warn(received.error());
@@ -375,9 +360,7 @@ void receive_one(const sink::Sink &listener, lt::session &session,
   }
   spdlog::info(r->message);
   if (const auto gone = protocol::removed_path(received.value())) {
-    repairs.announcements.erase(*gone);
-    repairs.applied.erase(*gone);
-    repairs.pending.erase(*gone);
+    repairs.forget(*gone);
   }
   if (r->created) {
     inbound.origins.insert_or_assign(*r->created, r->origin);
@@ -510,7 +493,7 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
   // deletions and its own alike: a deletion it does not remember is one it
   // cannot repair a peer with.
   auto tombstones = reconcile::tombstone_map_t{};
-  auto repairs = repairs_t{};
+  auto repairs = protocol::repairs_t{};
   // Where each peer stood when it last said so, and the draw over them.
   auto rounds = rounds_t{};
   auto last_stats = std::chrono::steady_clock::now();

@@ -15,6 +15,7 @@
 #include <libtorrent/torrent_handle.hpp>
 #include <zmq.hpp>
 
+#include <files.h>
 #include <reconcile.h>
 
 namespace protocol {
@@ -54,6 +55,28 @@ struct applied_t {
 
 using applied_map_t = std::map<std::filesystem::path, applied_t>;
 
+// Everything this node remembers a path by for the sake of repairing a peer
+// with it: the repairs it has taken on, what it last applied for each path, and
+// the announcement each path was last seen with. They are one struct because
+// they have one lifetime: a path that leaves the listing has to leave all three
+// at once, and three maps cleaned up in three places is three chances to leak.
+struct repairs_t {
+  reconcile::pending_map_t pending;
+  // What this node last applied for each path, which is what an announcement
+  // for that path is judged against.
+  applied_map_t applied;
+  // The announcement each path was last seen with, which is what a repair says
+  // again. The session cannot rebuild it, and reading the file to hash it
+  // afresh is the cost a repair exists to avoid.
+  std::map<std::filesystem::path, std::string> announcements;
+
+  // Drops every trace of a path. Called wherever the path leaves the listing,
+  // whether a peer asked for the deletion or its digest only implied it: an
+  // announcement left behind by a path that is gone is one nothing will ever
+  // erase (V57).
+  void forget(const std::filesystem::path &path);
+};
+
 // The tombstones travel in because a create and a remove are the two things
 // that write them: a deletion this node is told about has to be recorded, and
 // a file that arrives newer than a deletion cancels it.
@@ -79,4 +102,17 @@ void erase(lt::session &s, const std::filesystem::path &path);
 // having to read the wire format itself.
 auto removed_path(const std::vector<zmq::message_t> &v)
     -> std::optional<std::filesystem::path>;
+
+// Takes on the deletions a peer's digest carries that this node has not got,
+// and drops whatever loses to them. A node that never saw the remove would
+// otherwise mismatch the root hash for ever and ship a full digest every round,
+// and a node coming back with the file would hand it to everyone again.
+//
+// A path that goes leaves the listing, the session, the disk and the repair
+// cache together (V57). Answers with the paths whose file was actually deleted,
+// so the caller can say which they were.
+auto adopt(lt::session &s, const reconcile::tombstone_map_t &theirs,
+           files::file_map_t &former, reconcile::tombstone_map_t &mine,
+           repairs_t &repairs, reconcile::time_point now)
+    -> std::vector<std::filesystem::path>;
 } // namespace protocol
