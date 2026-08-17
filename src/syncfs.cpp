@@ -235,11 +235,10 @@ auto to_string(lt::torrent_status::state_t s) -> std::string {
   }
 }
 
-// The repairs this node has taken on, and the source of the randomized wait
-// that keeps every holder of the same gap from answering at once.
+// The repairs this node has taken on, paced so that thousands of them do not
+// go out in one loop iteration.
 struct repairs_t {
   reconcile::pending_map_t pending;
-  reconcile::Backoff backoff;
   // What this node last applied for each path, which is what an announcement
   // for that path is judged against.
   protocol::applied_map_t applied;
@@ -290,16 +289,14 @@ void read_digest(const std::vector<zmq::message_t> &v, lt::session &session,
     }
   }
 
-  // Whoever holds a file the peer lacks is the one that repairs it: PUB/SUB
-  // has no request path, so the node with the gap cannot ask anyone. Every
-  // holder waits a randomized while and drops its own repair on seeing
-  // another's, so nobody is elected and the whole thing keeps working with
-  // any one of them wedged.
+  // This digest was addressed here and nowhere else, so what is left over is
+  // this node's alone to repair: nobody else is going to answer it, and nobody
+  // else has to be told to stand down. The answer still goes out broadcast, so
+  // every node that loads the torrent seeds it and not only the one that asked.
   const auto missing = reconcile::gaps(former, tombstones, held);
   if (!missing.empty()) {
     spdlog::info("{} paths to repair for a peer", missing.size());
-    reconcile::arm(repairs.pending, missing, std::chrono::steady_clock::now(),
-                   repairs.backoff);
+    reconcile::arm(repairs.pending, missing, std::chrono::steady_clock::now());
   }
 }
 
@@ -324,38 +321,47 @@ auto state_due(const quiescence_t &q) -> bool {
          (quiescent && since_state >= reconcile::period);
 }
 
+// What this node knows about where its peers stand, and the draw that turns
+// that into the one peer it asks this round.
+struct rounds_t {
+  reconcile::state_map_t peers;
+  reconcile::Partner partner;
+};
+
 // The two verbs the reconciliation reads for itself, once act() has judged
 // them well formed.
 void reconcile_message(std::string_view verb,
                        const std::vector<zmq::message_t> &v,
-                       lt::session &session, const source::Source &server,
+                       lt::session &session, std::string_view own_endpoint,
                        files::file_map_t &former,
                        reconcile::tombstone_map_t &tombstones,
-                       repairs_t &repairs) {
-  // A root hash that differs means one of the two is missing something and
-  // neither knows what. The answer is a full digest, addressed back at the node
-  // whose hash it was: broadcasting it would hand every other peer the same
-  // O(M) message for nothing, every round, for as long as the two disagree.
+                       repairs_t &repairs, rounds_t &rounds) {
+  // A root hash is filed away, not answered. Answering every one of them is
+  // N-1 digests arriving at every publisher every round, and a whole-tree hash
+  // computed once per message to decide it; the round asks one peer instead,
+  // once, off the record kept here.
   if (verb == "state") {
-    if (v.at(1).to_string_view() != reconcile::hash(former, tombstones)) {
-      server.digest(utils::Endpoint{v.at(2).to_string_view()},
-                    reconcile::encode(former), reconcile::encode(tombstones));
+    const auto sender = v.at(2).to_string();
+    // Never this node's own. It subscribes to itself, so its own root hash
+    // comes back to it, and a tree that moved in between would leave it drawing
+    // itself as the peer to ask.
+    if (sender != own_endpoint) {
+      rounds.peers.insert_or_assign(sender, v.at(1).to_string());
     }
     return;
   }
-  // A node subscribes only to digests addressed at itself, so a peer's never
-  // arrives here. Its own still can: the state it published a moment ago comes
-  // back to it, and if the tree moved in between it answers itself.
-  if (verb == "digest" && v.at(1).to_string_view() != server.endpoint) {
+  // Addressed at this node and nowhere else, and no node addresses itself, so
+  // whatever arrives is a peer's and is read.
+  if (verb == "digest") {
     read_digest(v, session, former, tombstones, repairs);
   }
 }
 
 // One inbound message, from the wire to whatever it asks of this node.
 void receive_one(const sink::Sink &listener, lt::session &session,
-                 const source::Source &server, files::file_map_t &former,
+                 std::string_view own_endpoint, files::file_map_t &former,
                  reconcile::tombstone_map_t &tombstones, inbound_t &inbound,
-                 repairs_t &repairs) {
+                 repairs_t &repairs, rounds_t &rounds) {
   auto const received = listener.receive(protocol::max_parts);
   if (!received.has_value()) {
     spdlog::warn(received.error());
@@ -383,13 +389,14 @@ void receive_one(const sink::Sink &listener, lt::session &session,
     repairs.applied.insert_or_assign(
         *r->created,
         protocol::applied_t{.origin = r->origin, .content = r->content});
-    // And another holder getting there first is what stands this node's own
-    // repair down, which is what keeps the duplicates far below the number of
-    // holders.
+    // And an announcement for the path arriving first is what stands this
+    // node's own repair down. One peer reads a digest now, so this is no longer
+    // what keeps the duplicates down; rounds against two peers can still
+    // overlap, because the quiescence gate only mostly serializes them.
     repairs.pending.erase(*r->created);
   }
-  reconcile_message(r->verb, received.value(), session, server, former,
-                    tombstones, repairs);
+  reconcile_message(r->verb, received.value(), session, own_endpoint, former,
+                    tombstones, repairs, rounds);
 }
 
 auto torrent_states(const lt::session &s) -> std::vector<lt::torrent_status> {
@@ -495,6 +502,8 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
   // cannot repair a peer with.
   auto tombstones = reconcile::tombstone_map_t{};
   auto repairs = repairs_t{};
+  // Where each peer stood when it last said so, and the draw over them.
+  auto rounds = rounds_t{};
   auto last_stats = std::chrono::steady_clock::now();
   auto const interval = std::chrono::seconds{2};
   // The last time anything happened to the sync directory, whether this node
@@ -529,12 +538,22 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
                    .last_change = last_change,
                    .settled = settled})) {
       last_state = now;
-      server.state(reconcile::hash(former, tombstones));
+      // Hashed once for the round, and the same number decides both what goes
+      // out and whether anybody is worth asking.
+      const auto mine = reconcile::hash(former, tombstones);
+      server.state(mine);
+      // One peer, drawn from those whose last root hash differed. A gap that
+      // survives the round turns up again next round and draws somebody else,
+      // so a wedged peer costs a round and nothing has to detect it.
+      if (const auto asked = rounds.partner.pick(rounds.peers, mine)) {
+        server.digest(utils::Endpoint{*asked}, reconcile::encode(former),
+                      reconcile::encode(tombstones));
+      }
     }
     publish_repairs(repairs, server, former, now);
     if (listener.receive_ready()) {
-      receive_one(listener, session, server, former, tombstones, inbound,
-                  repairs);
+      receive_one(listener, session, server.endpoint, former, tombstones,
+                  inbound, repairs, rounds);
     }
   }
   spdlog::info("Stopping.");

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
@@ -180,33 +181,42 @@ auto gaps(const files::file_map_t &mine, const tombstone_map_t &tombstones,
   return found;
 }
 
-auto repair_window(size_t gaps) -> std::chrono::milliseconds {
-  // Twenty milliseconds a gap, which puts a thousand of them just under a
-  // minute: the same order as the time the files themselves take to move, and
-  // far enough past the second and a half a swarm needs merely to finish
-  // subscribing for a peer's repair to be seen before this node's own is due.
-  constexpr auto per_gap = std::chrono::milliseconds{20};
-  constexpr auto shortest = std::chrono::milliseconds{1000};
-  constexpr auto longest = std::chrono::milliseconds{60000};
-  return std::clamp(per_gap * static_cast<std::int64_t>(gaps), shortest,
-                    longest);
-}
+Partner::Partner() : generator{std::random_device{}()} {}
 
-Backoff::Backoff() : generator{std::random_device{}()} {}
-
-auto Backoff::draw(std::chrono::milliseconds window)
-    -> std::chrono::milliseconds {
-  std::uniform_int_distribution<std::int64_t> spread{window.count() / 2,
-                                                     window.count()};
-  return std::chrono::milliseconds{spread(generator)};
+auto Partner::pick(const state_map_t &peers, std::string_view mine)
+    -> std::optional<std::string> {
+  std::vector<const std::string *> candidates;
+  for (const auto &[endpoint, hashes] : peers) {
+    if (hashes != mine) {
+      candidates.push_back(&endpoint);
+    }
+  }
+  if (candidates.empty()) {
+    return std::nullopt;
+  }
+  std::uniform_int_distribution<size_t> among{0, candidates.size() - 1};
+  return *candidates.at(among(generator));
 }
 
 void arm(pending_map_t &pending,
          const std::vector<std::filesystem::path> &missing,
-         std::chrono::steady_clock::time_point now, Backoff &backoff) {
-  const auto window = repair_window(missing.size());
+         std::chrono::steady_clock::time_point now) {
+  // Twenty milliseconds a gap, which puts a thousand of them just under a
+  // minute: the same order as the time the files themselves take to move. The
+  // ladder is what keeps a node holding thousands of gaps from putting them all
+  // on the wire in one loop iteration, where the receiver adds one torrent an
+  // iteration and would drop the rest.
+  constexpr auto pace = std::chrono::milliseconds{20};
+  // Behind whatever is already waiting, so that a second round's gaps queue
+  // after the first round's instead of landing on top of them.
+  auto next = now;
+  for (const auto &waiting : pending) {
+    next = std::max(next, waiting.second + pace);
+  }
   for (const auto &path : missing) {
-    pending.try_emplace(path, now + backoff.draw(window));
+    if (pending.try_emplace(path, next).second) {
+      next += pace;
+    }
   }
 }
 

@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -198,45 +199,79 @@ TEST(Reconcile, V43GapsAreTheHoldersToRepair) {
                                                        "./only_here"}));
 }
 
-TEST(Reconcile, V51WindowScalesWithGapCount) {
-  // A repair is only cancelled by one that is observed, and a receiver drains
-  // one torrent per loop iteration, so a fixed second is already too short at
-  // a few dozen gaps: nothing would be seen inside it, nobody would stand
-  // down, and every holder would answer every gap.
-  ASSERT_LT(reconcile::repair_window(1), reconcile::repair_window(1000));
-  ASSERT_LT(reconcile::repair_window(100), reconcile::repair_window(1000));
-  // With a floor, so that a single gap is still spread over something.
-  ASSERT_GE(reconcile::repair_window(1), std::chrono::seconds{1});
-  // And a ceiling, so that it always ends.
-  ASSERT_LE(reconcile::repair_window(1000000), std::chrono::seconds{60});
+TEST(Reconcile, V59PartnerIsOneMismatchingPeer) {
+  const auto mine = std::string{"my own root hash"};
+  const auto peers = reconcile::state_map_t{{"tcp://a:5555", "another hash"},
+                                            {"tcp://b:5555", "another hash"},
+                                            {"tcp://c:5555", mine}};
+  auto partner = reconcile::Partner{};
+
+  // One peer is asked, never the whole set, and never a peer that already
+  // agrees: a digest costs O(M) bytes and there is nothing in it for a node
+  // holding the same tree.
+  auto seen = std::set<std::string>{};
+  for (int round = 0; round < 100; ++round) {
+    const auto asked = partner.pick(peers, mine);
+    ASSERT_TRUE(asked.has_value());
+    ASSERT_NE(*asked, "tcp://c:5555");
+    seen.insert(*asked);
+  }
+  // And a different one over the rounds, which is what makes a wedged peer cost
+  // one round rather than the gap for ever. Assigning the choice instead would
+  // need every node to agree on a set carried over a plane that drops.
+  ASSERT_EQ(seen, (std::set<std::string>{"tcp://a:5555", "tcp://b:5555"}));
 }
 
-TEST(Reconcile, V43ArmedRepairsFireOnceAndOnlyWhenDue) {
+TEST(Reconcile, V59NoPartnerWhenEveryPeerAgrees) {
+  const auto mine = std::string{"my own root hash"};
+  const auto peers =
+      reconcile::state_map_t{{"tcp://a:5555", mine}, {"tcp://b:5555", mine}};
+  auto partner = reconcile::Partner{};
+
+  // A converged swarm sends nothing but its root hash, which is the whole of
+  // what makes the idle cost thirty two bytes a node a period.
+  ASSERT_FALSE(partner.pick(peers, mine).has_value());
+  ASSERT_FALSE(partner.pick({}, mine).has_value());
+}
+
+TEST(Reconcile, V59RepairsArePacedWithoutARandomDraw) {
   const auto now = std::chrono::steady_clock::now();
   auto pending = reconcile::pending_map_t{};
-  auto backoff = reconcile::Backoff{};
 
-  reconcile::arm(pending, {"./a", "./b"}, now, backoff);
+  reconcile::arm(pending, {"./a", "./b", "./c"}, now);
+  ASSERT_EQ(pending.size(), 3);
+
+  // One goes at once and the rest queue behind it. A node answering thousands
+  // of gaps would otherwise put them all on the wire in one loop iteration,
+  // where the receiver adds one torrent an iteration and drops the rest.
+  const auto first = reconcile::due(pending, now);
+  ASSERT_EQ(first.size(), 1);
+  // Taken out as they are handed over, so a repair goes out once. An unrepaired
+  // gap needs no retry engine: it turns up in the next digest.
   ASSERT_EQ(pending.size(), 2);
-  // Drawn from the second half of the window, so nothing is due at once.
-  ASSERT_TRUE(reconcile::due(pending, now).empty());
 
-  const auto fired = reconcile::due(pending, now + reconcile::repair_window(2));
-  ASSERT_EQ(fired.size(), 2);
-  // And taken out as they are handed over, so a repair goes out once. An
-  // unrepaired gap needs no retry engine: it turns up in the next digest.
+  const auto rest = reconcile::due(pending, now + std::chrono::seconds{1});
+  ASSERT_EQ(rest.size(), 2);
   ASSERT_TRUE(pending.empty());
+
+  // And the same gaps give the same moments: there is no generator left in this
+  // path, because one reader per digest means there are no duplicates to
+  // spread.
+  auto again = reconcile::pending_map_t{};
+  reconcile::arm(again, {"./a", "./b", "./c"}, now);
+  auto once_more = reconcile::pending_map_t{};
+  reconcile::arm(once_more, {"./a", "./b", "./c"}, now);
+  ASSERT_EQ(again, once_more);
 }
 
 TEST(Reconcile, V43ArmingAgainDoesNotPushTheMomentBack) {
   const auto now = std::chrono::steady_clock::now();
   auto pending = reconcile::pending_map_t{};
-  auto backoff = reconcile::Backoff{};
 
-  reconcile::arm(pending, {"./a"}, now, backoff);
+  reconcile::arm(pending, {"./a"}, now);
   const auto due_at = pending.at("./a");
   // The same gap turns up in every digest until it is closed. Re-arming it
   // would move its moment along every round and it would never arrive.
-  reconcile::arm(pending, {"./a"}, now + std::chrono::seconds{1}, backoff);
+  reconcile::arm(pending, {"./a"}, now + std::chrono::seconds{1});
   ASSERT_EQ(pending.at("./a"), due_at);
 }

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
@@ -81,40 +82,49 @@ auto adoptable(const tombstone_map_t &theirs, const files::file_map_t &held,
                const tombstone_map_t &mine, time_point now) -> tombstone_map_t;
 
 // The paths this node holds that a peer either lacks or holds an older copy
-// of. The holder is the one that repairs them: PUB/SUB has no request path,
-// so a node with a gap has no way of asking anyone for anything.
+// of, read off the digest that peer addressed here. Whoever was asked is the
+// one that answers, and being asked is the whole of the appointment: nobody is
+// elected, and a peer that cannot answer costs the round it was asked in.
 auto gaps(const files::file_map_t &mine, const tombstone_map_t &tombstones,
           const files::file_map_t &theirs)
     -> std::vector<std::filesystem::path>;
 
-// The repairs this node has agreed to make and the moment each is due. Every
-// holder of a gap arms one, and every one of them cancels on seeing another
-// holder's repair land, so nobody has to be elected and the liveness of the
-// whole thing rests on no single peer.
+// The repairs this node has agreed to make and the moment each is due. One
+// digest has one reader, so these are this node's alone to answer and the
+// moments only pace them: they are not there to keep two holders from answering
+// at once, which is what the randomized window used to be for.
 using pending_map_t =
     std::map<std::filesystem::path, std::chrono::steady_clock::time_point>;
 
-// How long the holders spread their repairs over. It has to grow with the
-// number of gaps: a repair is only cancelled by one that is *observed*, and a
-// receiver drains one torrent per loop iteration, so at a thousand gaps
-// nothing is observed inside a fixed second and every holder answers every
-// gap, which is the storm the delay exists to prevent.
-auto repair_window(size_t gaps) -> std::chrono::milliseconds;
+// What this node last heard each of its peers' trees hash to, by the endpoint
+// the peer named in its state. One entry a peer, so a root hash that differs
+// can be answered without waiting to hear it again.
+using state_map_t = std::map<std::string, std::string>;
 
-// The randomized wait itself, drawn from the second half of the window. Equal
-// peers have nothing but randomization to tell them apart.
-struct Backoff {
+// Which peer to ask this round: uniformly at random among those whose last root
+// hash differed from this node's own, and nothing at all when they all agree,
+// so a converged swarm ships no digest.
+//
+// Randomized rather than assigned. A rule every node could compute alone —
+// modulo over the holder set, say — needs every node to agree on that set, and
+// the digests carrying it ride a plane that drops: the disagreement case is
+// nobody sending, silently and for ever, where randomization's is a duplicate
+// that costs nothing.
+struct Partner {
   std::mt19937 generator;
 
-  Backoff();
-  auto draw(std::chrono::milliseconds window) -> std::chrono::milliseconds;
+  Partner();
+  auto pick(const state_map_t &peers, std::string_view mine)
+      -> std::optional<std::string>;
 };
 
-// Takes on every gap not already waiting. Re-arming one that is would push its
-// moment back every round and it would never arrive.
+// Takes on every gap not already waiting, one pace apart so that a node holding
+// thousands of them does not put them all on the wire in a single loop
+// iteration. Re-arming a gap already waiting would push its moment back every
+// round and it would never arrive.
 void arm(pending_map_t &pending,
          const std::vector<std::filesystem::path> &missing,
-         std::chrono::steady_clock::time_point now, Backoff &backoff);
+         std::chrono::steady_clock::time_point now);
 
 // The repairs whose wait is over, taken out of the map as they are handed
 // back. An unrepaired gap needs no backoff engine to try again: it turns up
