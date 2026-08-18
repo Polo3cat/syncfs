@@ -67,7 +67,10 @@ def sha256(file):
     with open(file, "rb") as f:
         return hashlib.file_digest(f, hashlib.sha256).hexdigest()
 
-def sync_one_to_one(tmp_dirs) -> bool:
+# Ten nodes, one of them the writer: this is one to many, and the file is what
+# makes it its own benchmark rather than a duplicate of the small file case in
+# perf_one_to_many_test.py.
+def sync_gb_file_one_to_many(tmp_dirs) -> bool:
     end = time.time() + expected_sync_delay
     while time.time() < end:
         exists = [(PosixPath(dir_) / "file").exists() for dir_ in tmp_dirs]
@@ -93,9 +96,11 @@ def sync_one_to_one(tmp_dirs) -> bool:
     return False
 
 
-def test_benchmark_sync_one_to_many(tmp_dirs, benchmark):
+def test_benchmark_sync_gb_file_one_to_many(tmp_dirs, benchmark):
     file = PosixPath(tmp_dirs[0]) / "file"
     with file.open(mode="wb") as f:
         f.write(os.urandom(1024**3+7))
 
-    assert benchmark.pedantic(sync_one_to_one, (tmp_dirs,), iterations=1, rounds=1)
+    assert benchmark.pedantic(
+        sync_gb_file_one_to_many, (tmp_dirs,), iterations=1, rounds=1
+    )
