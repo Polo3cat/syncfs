@@ -35,16 +35,15 @@ forbidden_libs = (
 
 
 def find_ldd() -> str:
-    """Absolute path to ldd.
+    """Path to ldd, resolved off PATH like any other tool.
 
-    The ctest PATH for these tests holds the syncfs build directory and
-    CMAKE_SYSTEM_PREFIX_PATH, so the usual binary directories are absent and
-    ldd cannot be found by name alone.
+    The ctest PATH used to hold the syncfs build directory and
+    CMAKE_SYSTEM_PREFIX_PATH, which is a list of install prefixes and not a
+    PATH, so /usr/bin was unreachable and this needed a hardcoded fallback
+    (T30).
     """
-    found = shutil.which("ldd") or shutil.which(
-        "ldd", path="/usr/bin:/bin:/usr/local/bin"
-    )
-    assert found is not None, "ldd not found"
+    found = shutil.which("ldd")
+    assert found is not None, "ldd not found on PATH"
     return found
 
 

@@ -10,5 +10,10 @@ add_test(NAME syncfs-integration
 # come back at all.
 set_tests_properties(syncfs-integration PROPERTIES TIMEOUT 900)
 
+# The build directory first, then the PATH this configure ran with.
+# CMAKE_SYSTEM_PREFIX_PATH used to stand in for the second half, and it is a
+# semicolon separated list of install prefixes (/usr/local;/usr) rather than a
+# PATH: /usr/bin was unreachable, so syncfs was the only tool a test could
+# resolve by name and everything else needed an absolute path.
 set_tests_properties(syncfs-integration
-	PROPERTIES ENVIRONMENT "PATH=$<TARGET_FILE_DIR:syncfs>:${CMAKE_SYSTEM_PREFIX_PATH};POETRY_VIRTUALENVS_IN_PROJECT=true;SYNCFS_BINARY_DIR=${CMAKE_BINARY_DIR}")
+	PROPERTIES ENVIRONMENT "PATH=$<TARGET_FILE_DIR:syncfs>:$ENV{PATH};POETRY_VIRTUALENVS_IN_PROJECT=true;SYNCFS_BINARY_DIR=${CMAKE_BINARY_DIR}")
