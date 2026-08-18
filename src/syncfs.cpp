@@ -548,7 +548,11 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
       std::atomic_flag_clear_explicit(&alert_ready, std::memory_order::relaxed);
     }
     if (file_monitor.wait()) {
-      file_monitor.discard();
+      if (const auto discarded = file_monitor.discard(); !discarded) {
+        // The tree is re-listed below either way, so this is not fatal, but an
+        // inotify read that fails silently is a daemon awake and blind.
+        spdlog::warn("{}", discarded.error());
+      }
       last_change = now;
       auto current = files::list();
       send(local_changes(former, current, inbound.written, tombstones), current,

@@ -8,6 +8,8 @@
 #include <string>
 #include <sys/inotify.h>
 #include <system_error>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -135,6 +137,47 @@ TEST_F(Monitor, V22DrainsEveryQueuedEvent) {
                                             "./a/b/f2.txt"}));
 }
 
+TEST_F(Monitor, V15MonitorIsMoveOnlyAndLeavesNothingBehind) {
+  // The daemon holds one monitor and moves it into the sync loop, so a copy
+  // would duplicate the inotify descriptor and close it twice.
+  static_assert(!std::is_copy_constructible_v<monitor::Monitor>);
+  static_assert(!std::is_copy_assignable_v<monitor::Monitor>);
+  static_assert(std::is_move_constructible_v<monitor::Monitor>);
+  static_assert(std::is_move_assignable_v<monitor::Monitor>);
+
+  auto original = monitor::Monitor();
+  ASSERT_FALSE(original.watched().empty());
+
+  auto moved = std::move(original);
+  // The moved-to monitor owns the descriptor and the watches with it.
+  ASSERT_TRUE(is_watched(moved, "."));
+  ASSERT_TRUE(is_watched(moved, "./a"));
+  // Reading a moved-from monitor is the invariant under test, so both
+  // analysers are told this access is deliberate.
+  // cppcheck-suppress accessMoved
+  // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved)
+  ASSERT_TRUE(original.watched().empty());
+}
+
+TEST_F(Monitor, V22DiscardReportsAReadFailure) {
+  // A monitor that was moved from holds no descriptor (V15), which is the one
+  // way to make the refill inside discard() fail without breaking the kernel's
+  // idea of the tree. What is asserted is that the failure is reported at all:
+  // it used to be dropped into a [[maybe_unused]] and the daemon carried on
+  // believing it was still watching.
+  auto original = monitor::Monitor();
+  auto moved = std::move(original);
+
+  // cppcheck-suppress accessMoved
+  // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved)
+  const auto discarded = original.discard();
+
+  ASSERT_FALSE(discarded.has_value());
+  ASSERT_NE(discarded.error().find("Failed to read on inotify fd"),
+            std::string::npos)
+      << discarded.error();
+}
+
 TEST_F(Monitor, V34FileCreationAloneDoesNotDriveSync) {
   monitor::Monitor m;
 
@@ -153,7 +196,7 @@ TEST_F(Monitor, V23NewSubdirectoryBecomesWatched) {
   std::filesystem::create_directory("./a/b/c");
 
   ASSERT_TRUE(wait_for_event(m));
-  m.discard();
+  ASSERT_TRUE(m.discard().has_value());
   ASSERT_TRUE(is_watched(m, "./a/b/c"));
   ASSERT_EQ(m.watched(), directories_below_root());
 }
@@ -165,7 +208,7 @@ TEST_F(Monitor, V23RemovedDirectoryIsUnwatched) {
   std::filesystem::remove("./a/b");
 
   ASSERT_TRUE(wait_for_event(m));
-  m.discard();
+  ASSERT_TRUE(m.discard().has_value());
   ASSERT_FALSE(is_watched(m, "./a/b"));
   ASSERT_EQ(m.watched(), directories_below_root());
 }

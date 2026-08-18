@@ -190,7 +190,7 @@ T6|.|integration tests wait fixed `time.sleep`. flaky & slow. poll until deadlin
 T7|x|`README.md` still `cmake_template` boilerplate. rewrite for syncfs|G,I
 T8|.|no unit test for `protocol::act`|V3,V4,V7,V8
 T9|.|no unit test for `files.cpp` — `list`, `diff`, `diff_name`, `intersection_name`|V10,V11
-T10|~|no unit test for `monitor.cpp`|V14,V15
+T10|x|no unit test for `monitor.cpp`|V14,V15
 T11|.|no unit test for `sink.cpp` — `receive` short-message path|-
 T12|.|no test for `discovery::parse` — 512-char truncation, blank line, missing file|I
 T13|x|`files::append` & `files::remove` defined, called nowhere. They were §T.15's incremental helpers ∴ deleted with it (`src/files.cpp`, `include/files.h`), along with the `last_write_time(path)` overload only `append` used. ⊥ built, removed|V21,T15
@@ -205,7 +205,7 @@ T21|x|v2-only torrent @ relative path depth 1 loses top dir on receiver. wire co
 T22|x|usage printed `syncf`, binary is `syncfs`. Fixed by `2acfd22` 2026-08-08, same day the row was written; row never flipped & §I carried the typo as fact until a `/check` caught it. Now `Usage: syncfs <peers file> <listen address>` (`src/syncfs.cpp:588`)|I
 T23|x|`src/syncfs.cpp:236` `zmq::error_t` catch logs & falls off end of `main` — ⊥ `return EXIT_FAILURE` ∴ exit code 0 on fatal ZMQ error|V28,B4
 T24|x|`t.torrent_file.lock()` passed straight to `file_path`, deref'd unchecked ∴ expired weak_ptr = nullptr deref in stats print. Guard in `file_path` (`src/syncfs.cpp:98-100`), `<gone>` placeholder ∴ a torrent removed mid-snapshot still prints its counters, ⊥ crashes. The other 2 `.lock()` sites were already checked|V29
-T25|.|`src/monitor.cpp:118` `discard()` swallows `read()` error via `[[maybe_unused]]`. inotify read failure invisible|V22
+T25|x|`src/monitor.cpp:118` `discard()` swallows `read()` error via `[[maybe_unused]]`. inotify read failure invisible|V22
 T26|.|inotify poll 50 ms then ZMQ poll 100 ms, serial per iteration ∴ ≤ 150 ms idle latency & receive starves while waiting on inotify. single poll over both fds|V26
 T27|.|`discovery::parse` on missing/unreadable file returns empty vector, ⊥ error. only `assert` catches. §B.5 shows the failure mode is real, ⊥ theoretical|V2,I,T12,T16,B5
 T28|.|`tests/performance/perf_one_to_one_gb_file_test.py:96` test named `test_benchmark_sync_one_to_many`, is one-to-one|-

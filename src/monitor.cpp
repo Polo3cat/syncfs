@@ -267,13 +267,18 @@ auto Monitor::next_event()
   return event;
 }
 
-void Monitor::discard() {
-  [[maybe_unused]] auto _ = this->next_event();
+auto Monitor::discard() -> std::expected<void, std::string> {
+  auto const consumed = this->next_event();
   // The caller re-lists the whole tree after this, which already accounts for
   // the rest of the batch; keeping it would only force redundant traversals.
   batch.clear();
   // Cheap next to that traversal, and it keeps coverage correct even for a
-  // directory event that arrived without its own IN_ISDIR flag.
+  // directory event that arrived without its own IN_ISDIR flag. Both run even
+  // when the refill failed: the watch set is worth resyncing either way.
   resync_watches();
+  if (!consumed.has_value()) {
+    return std::unexpected(consumed.error());
+  }
+  return {};
 }
 } // namespace monitor

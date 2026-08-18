@@ -40,8 +40,11 @@ public:
   // Returns when monitor is ready.
   [[nodiscard]] auto wait() -> bool;
   // Consumes the whole batch the last read drained. Callers that re-list the
-  // tree afterwards have already accounted for all of it.
-  void discard();
+  // tree afterwards have already accounted for all of it. A refill that failed
+  // is reported rather than dropped: an inotify read error is the one way this
+  // monitor stops seeing the tree, and a silent one leaves the daemon awake and
+  // blind.
+  [[nodiscard]] auto discard() -> std::expected<void, std::string>;
 
   // Directories currently watched, sorted. The sync root "." is always the
   // first element while the monitor owns its inotify descriptor.
