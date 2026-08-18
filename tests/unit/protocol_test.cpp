@@ -34,7 +34,8 @@ constexpr auto default_time = "1700000000000000000";
 // file that does not exist.
 auto torrent_buffer(const std::filesystem::path &file,
                     const std::string &content,
-                    const std::string &origin = default_time)
+                    const std::string &origin = default_time,
+                    const std::vector<std::pair<std::string, int>> &nodes = {})
     -> std::vector<char> {
   {
     std::ofstream ofs(file);
@@ -46,6 +47,11 @@ auto torrent_buffer(const std::filesystem::path &file,
       file.lexically_normal(), static_cast<int64_t>(entry.file_size())};
   lt::create_torrent torrent(std::vector{std::move(file_entry)}, 0,
                              lt::create_torrent::v2_only);
+  // A sender embeds its own libtorrent endpoint as a DHT node, which is how the
+  // swarm seeds its own DHT with no router to ask (C, V61, R2).
+  for (const auto &node : nodes) {
+    torrent.add_node(node);
+  }
   // The entry holds the whole path relative to the sync root, so the hashes
   // are read from the root and not from the file's own parent (§V.39).
   lt::set_piece_hashes(torrent, ".");
@@ -137,6 +143,40 @@ protected:
   auto operator=(Protocol &&) -> Protocol = delete;
 };
 } // namespace
+
+TEST_F(Protocol, V8CreateAddsEveryDhtNodeItCarries) {
+  // The peer set is static and there is no DHT router (C, V61), so the nodes an
+  // announcement carries are the whole of what the receiving session learns
+  // about where its peers are. The outcome names each one it registered, which
+  // is also the only line a triage of a starved swarm has to read (B1).
+  const auto buffer =
+      torrent_buffer("./important_file", "content", default_time,
+                     {{"10.0.0.1", 6881}, {"10.0.0.2", 6882}});
+  auto session = offline_session();
+
+  const auto outcome =
+      protocol::act(create_message(buffer), session, tombstones, applied);
+
+  ASSERT_TRUE(outcome.has_value()) << outcome.error();
+  ASSERT_NE(outcome->message.find("10.0.0.1:6881"), std::string::npos)
+      << outcome->message;
+  ASSERT_NE(outcome->message.find("10.0.0.2:6882"), std::string::npos)
+      << outcome->message;
+  ASSERT_EQ(session.get_torrents().size(), 1U);
+}
+
+TEST_F(Protocol, V8CreateWithoutDhtNodesIsStillApplied) {
+  // A repair rebuilt off disk carries whatever nodes its rebuilder embedded,
+  // and an announcement with none is not malformed: the file still has to land.
+  const auto buffer = torrent_buffer("./important_file", "content");
+  auto session = offline_session();
+
+  const auto outcome =
+      protocol::act(create_message(buffer), session, tombstones, applied);
+
+  ASSERT_TRUE(outcome.has_value()) << outcome.error();
+  ASSERT_EQ(session.get_torrents().size(), 1U);
+}
 
 TEST_F(Protocol, V35NewTorrentReplacesSamePathTorrent) {
   auto session = offline_session();

@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 
+from .wait import contents_match, poll_until, two_node_deadline
+
 
 @pytest.fixture(scope="function")
 def tmp_dir_a():
@@ -62,20 +64,16 @@ def syncfs_b(tmp_dir_b, peers_b):
             print(pb.stdout.read())
 
 
-expected_sync_delay = 1
-
-
 def test_one_syncf_sends_to_another(syncfs_a, syncfs_b, tmp_dir_a, tmp_dir_b):
+    """V19: two nodes and a four byte change converge inside five seconds."""
     file_a = PosixPath(tmp_dir_a) / "file"
     with file_a.open(mode="w") as f:
         f.write("1234")
 
-    time.sleep(expected_sync_delay)
     file_b = PosixPath(tmp_dir_b) / "file"
-    assert file_b.exists()
-    with file_b.open(mode="r") as f:
-        content = f.read()
-        assert content == "1234"
+    assert poll_until(
+        lambda: contents_match(file_b, "1234"), two_node_deadline
+    ), "the file never arrived"
 
 
 @pytest.fixture(scope="function")
@@ -99,8 +97,9 @@ def test_one_syncf_deletes_another_file(
 ):
     file_a.unlink()
 
-    time.sleep(expected_sync_delay)
-    assert not file_b.exists()
+    assert poll_until(
+        lambda: not file_b.exists(), two_node_deadline
+    ), "the deletion never arrived"
 
 
 def test_one_syncf_updates_another_file(
@@ -108,5 +107,6 @@ def test_one_syncf_updates_another_file(
 ):
     file_a.write_text("5678")
 
-    time.sleep(expected_sync_delay)
-    assert "5678" == file_b.read_text()
+    assert poll_until(
+        lambda: contents_match(file_b, "5678"), two_node_deadline
+    ), "the update never arrived"

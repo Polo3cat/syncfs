@@ -1,7 +1,6 @@
 #include "libtorrent/settings_pack.hpp"
 #include <algorithm>
 #include <atomic>
-#include <cassert>
 #include <chrono>
 #include <csignal>
 #include <cstdint>
@@ -29,6 +28,7 @@
 #include <libtorrent/extensions/ut_pex.hpp>
 #include <libtorrent/session.hpp>
 #include <libtorrent/session_params.hpp>
+#include <libtorrent/time.hpp>
 #include <libtorrent/torrent_handle.hpp>
 #include <libtorrent/torrent_info.hpp>
 #include <libtorrent/torrent_status.hpp>
@@ -121,9 +121,33 @@ struct inbound_t {
 // every peer already has; without the stamp first, every entry of the
 // snapshot is stale the moment it is taken and the snapshot suppresses
 // nothing at all.
-void stamp_and_remember(inbound_t &inbound, const lt::torrent_handle &handle) {
+void stamp_and_remember(inbound_t &inbound, const lt::torrent_handle &handle,
+                        std::filesystem::file_time_type written_by) {
   const auto path = protocol::held_path(handle);
   if (!path) {
+    return;
+  }
+  std::error_code err;
+  const auto before_stamp = std::filesystem::last_write_time(*path, err);
+  if (err) {
+    return;
+  }
+  // Every write libtorrent makes to this file is done by the time it says the
+  // cache is flushed, so a modification time later than that alert is somebody
+  // else's write. A local edit can land in exactly that gap, and putting the
+  // origin time back on it would rewrite the edit's own timestamp backwards;
+  // the snapshot below would then read the edit as libtorrent's write and
+  // suppress it for ever. The two nodes end up holding different content under
+  // the same modification time, which V46 hashes as agreement, so nothing
+  // detects the divergence and no repair follows (B17). The edit keeps its time
+  // instead and travels as the local change it is. The cost of reading a write
+  // of libtorrent's own as an edit is one redundant announcement of a file this
+  // node has just received; the cost of the reverse is a lost write nobody can
+  // see.
+  if (before_stamp > written_by) {
+    inbound.origins.erase(*path);
+    spdlog::debug("\"{}\" was edited under its own transfer, keeping its time",
+                  path->native());
     return;
   }
   if (const auto origin = inbound.origins.find(*path);
@@ -131,7 +155,6 @@ void stamp_and_remember(inbound_t &inbound, const lt::torrent_handle &handle) {
     static_cast<void>(utils::stamp(*path, origin->second));
     inbound.origins.erase(origin);
   }
-  std::error_code err;
   const auto time = std::filesystem::last_write_time(*path, err);
   if (err) {
     return;
@@ -139,19 +162,42 @@ void stamp_and_remember(inbound_t &inbound, const lt::torrent_handle &handle) {
   inbound.written.insert_or_assign(*path, time);
 }
 
+// The wall clock instant an alert was made at. libtorrent stamps its alerts
+// with its own clock and file timestamps come from the wall clock, so the two
+// only compare once the age of the alert is taken off the time now.
+auto alert_time(const lt::alert *alert) -> std::filesystem::file_time_type {
+  const auto age =
+      std::chrono::duration_cast<std::chrono::system_clock::duration>(
+          lt::clock_type::now() - alert->timestamp());
+  return utils::to_file_time(std::chrono::system_clock::now() - age);
+}
+
 void drain_alerts(lt::session &session, inbound_t &inbound) {
   auto alerts = std::vector<lt::alert *>{};
   session.pop_alerts(&alerts);
   for (const auto *alert : alerts) {
     spdlog::debug("{}", alert->message());
+    // Both handles below are checked before they are touched. A deletion for
+    // the same path may have overtaken the transfer: the alert was queued while
+    // the torrent was still in the session and remove_torrent (V38) dropped it
+    // before this drain, so the handle names nothing and every call on it
+    // throws libtorrent:20 out of the sync loop, which main turns into
+    // EXIT_FAILURE (V28). The receiver died on a file it had already finished
+    // writing. Nothing is lost by skipping: there is no file left to flush or
+    // stamp for a path the session no longer holds.
+    //
     // A finished torrent may still have pieces in flight to disk, so the file
     // is only stable once the flush it triggers comes back.
     if (const auto *finished =
             lt::alert_cast<lt::torrent_finished_alert>(alert)) {
-      finished->handle.flush_cache();
+      if (finished->handle.is_valid()) {
+        finished->handle.flush_cache();
+      }
     } else if (const auto *flushed =
                    lt::alert_cast<lt::cache_flushed_alert>(alert)) {
-      stamp_and_remember(inbound, flushed->handle);
+      if (flushed->handle.is_valid()) {
+        stamp_and_remember(inbound, flushed->handle, alert_time(alert));
+      }
     }
   }
 }
@@ -493,10 +539,22 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
 
   // status carries torrent_finished_alert and storage carries
   // cache_flushed_alert, the pair that tells us a file has reached disk.
-  settings.set_int(lt::settings_pack::alert_mask,
-                   static_cast<int>(static_cast<std::uint32_t>(
-                       lt::alert_category::error | lt::alert_category::status |
-                       lt::alert_category::storage)));
+  //
+  // connect, peer and dht are there to be read rather than acted on. connect is
+  // the one that says a connection was made or lost, peer the one that says a
+  // peer went wrong, dht the one that says a lookup happened. The swarm this
+  // daemon runs is peers connecting to peers and a DHT seeded only by the
+  // announcements themselves (C, V61), and both failures that cost the most so
+  // far were of exactly that shape: B1 was a seeder holding zero connections
+  // for twenty seconds and B10 was two nodes whose active sets never named the
+  // same torrent. With the default mask neither leaves a line behind, so triage
+  // starts by rebuilding the daemon.
+  settings.set_int(
+      lt::settings_pack::alert_mask,
+      static_cast<int>(static_cast<std::uint32_t>(
+          lt::alert_category::error | lt::alert_category::status |
+          lt::alert_category::storage | lt::alert_category::connect |
+          lt::alert_category::peer | lt::alert_category::dht)));
 
   auto params = lt::session_params(settings);
   auto session = lt::session(params);
@@ -618,8 +676,18 @@ auto main(int argc, char *argv[]) -> int try {
   static_cast<void>(std::signal(SIGTERM, request_stop));
   static_cast<void>(std::signal(SIGINT, request_stop));
 
-  auto peers = discovery::parse(std::filesystem::path{args[1]});
-  assert(!peers.empty());
+  // A real check, not an assert: NDEBUG takes an assert out of the release
+  // build and what is left is a daemon that binds its socket, subscribes to
+  // nobody and synchronizes with nothing, saying so in no log line (B5, V2).
+  const auto peers = discovery::parse(std::filesystem::path{args[1]});
+  if (!peers.has_value()) {
+    spdlog::critical("{}", peers.error());
+    return EXIT_FAILURE;
+  }
+  if (peers->empty()) {
+    spdlog::critical("No peers in \"{}\"", args[1]);
+    return EXIT_FAILURE;
+  }
 
   zmq::context_t ctx;
 
@@ -638,7 +706,7 @@ auto main(int argc, char *argv[]) -> int try {
   // water marks have to be set before the socket connects or binds.
   listener.set(zmq::sockopt::rcvhwm, announcement_backlog);
 
-  for (const auto &peer : peers) {
+  for (const auto &peer : *peers) {
     listener.connect(peer);
     spdlog::info("Subscribed to {}", peer);
   }

@@ -1,10 +1,11 @@
-import datetime
 import subprocess
 import tempfile
 import time
 from pathlib import PosixPath
 
 import pytest
+
+from .wait import contents_match, many_node_deadline, poll_until
 
 
 @pytest.fixture(scope="session")
@@ -58,25 +59,18 @@ def syncfs(peers, addrs, tmp_dirs):
         p.wait()
 
 
-expected_sync_delay = 1
-
-
-def contents_match(file, expected_content) -> bool:
-    return file.exists() and file.read_text() == expected_content
-
-
 def test_one_syncf_sends_to_many_other(tmp_dirs, syncfs):
+    """V18: ten nodes and a four byte change converge inside a second."""
     file_a = PosixPath(tmp_dirs[0]) / "file"
     with file_a.open(mode="w") as f:
         f.write("1234")
 
-    end = time.time() + expected_sync_delay
-    while time.time() < end:
-        for dir_ in tmp_dirs:
-            if not contents_match(PosixPath(dir_) / "file", "1234"):
-                break
-        else:
-            break
+    assert poll_until(
+        lambda: all(
+            contents_match(PosixPath(dir_) / "file", "1234") for dir_ in tmp_dirs
+        ),
+        many_node_deadline,
+    ), "the file did not reach every node"
 
 
 @pytest.fixture(scope="function")
@@ -91,15 +85,16 @@ def files(tmp_dirs) -> list[PosixPath]:
 def test_one_syncf_deletes_many_other(files, syncfs):
     files[0].unlink()
 
-    time.sleep(expected_sync_delay)
-    for file in files:
-        assert not file.exists()
+    assert poll_until(
+        lambda: not any(file.exists() for file in files),
+        many_node_deadline,
+    ), "the deletion did not reach every node"
 
 
 def test_one_syncf_updates_many_other(files, syncfs):
     files[0].write_text("5678")
-    print("Start to sleep", datetime.datetime.now(tz=datetime.UTC))
-    time.sleep(expected_sync_delay)
-    print("Finish to sleep", datetime.datetime.now(tz=datetime.UTC))
-    for file in files:
-        assert "5678" == file.read_text()
+
+    assert poll_until(
+        lambda: all(contents_match(file, "5678") for file in files),
+        many_node_deadline,
+    ), "the update did not reach every node"

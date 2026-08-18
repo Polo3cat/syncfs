@@ -184,22 +184,22 @@ id|status|task|cites
 T1|x|fix `syncfs-update` non-convergence|V17,B1
 T2|x|`source_test.cpp` asserted on `num_files()`, got 2 — pad. now asserts v2 `file tree`|V5,V24,B2
 T3|x|`perf_one_to_one_gb_file_test` makes its deadline. Closed by §B.7 (partial hash out of the sync loop, §V.34) + §T.42 (queue limits, §R.7) — ⊥ by work under this row. `syncfs-performance` 67.68 s & 73.80 s, 2 runs, vs the 120 s the test itself allows (`expected_sync_delay`, `tests/performance/perf_one_to_one_gb_file_test.py:64`), measured 2026-08-17. Row read "red — 1 GiB in 30 s budget, reaches 57%": budget ⊥ 30 s, it is 120 s, & the 57% predates §B.7. `lt::set_piece_hashes` still hashes the whole file synchronously in the sync loop (`src/source.cpp:29`) — still true, but ⊥ what misses a deadline now ∴ `?` moving it off the loop needs its own §V to argue for, ⊥ this row|C,V20,B7,T42
-T4|.|`tests/integration/many_syncfs_test.py:69` `test_one_syncf_sends_to_many_other` has ⊥ assert. loop breaks either way, test can never fail|V18
+T4|x|`tests/integration/many_syncfs_test.py:69` `test_one_syncf_sends_to_many_other` has ⊥ assert. loop breaks either way, test can never fail|V18
 T5|x|downloader writes file → own inotify fires → republishes identical content → duplicate info hash, wasted hash & traffic. suppress echo|V13,R5,V36
-T6|.|integration tests wait fixed `time.sleep`. flaky & slow. poll until deadline|V18,V19
+T6|x|integration tests wait fixed `time.sleep`. flaky & slow. poll until deadline|V18,V19
 T7|x|`README.md` still `cmake_template` boilerplate. rewrite for syncfs|G,I
-T8|.|no unit test for `protocol::act`|V3,V4,V7,V8
-T9|.|no unit test for `files.cpp` — `list`, `diff`, `diff_name`, `intersection_name`|V10,V11
+T8|x|no unit test for `protocol::act`|V3,V4,V7,V8
+T9|x|no unit test for `files.cpp` — `list`, `diff`, `diff_name`, `intersection_name`|V10,V11
 T10|x|no unit test for `monitor.cpp`|V14,V15
-T11|.|no unit test for `sink.cpp` — `receive` short-message path|-
-T12|.|no test for `discovery::parse` — 512-char truncation, blank line, missing file|I
+T11|x|no unit test for `sink.cpp` — `receive` short-message path|-
+T12|x|no test for `discovery::parse` — 512-char truncation, blank line, missing file|I
 T13|x|`files::append` & `files::remove` defined, called nowhere. They were §T.15's incremental helpers ∴ deleted with it (`src/files.cpp`, `include/files.h`), along with the `last_write_time(path)` overload only `append` used. ⊥ built, removed|V21,T15
 T14|x|dead commented block `src/monitor.cpp:116-128` dropped|-
 T15|x|closed won't-do, ⊥ built: derive the changed set from `Monitor::next_event()` events & drop the full traversal. §V.21 retired ∴ ⊥ an invariant asks for it, & §V.27's 1-traversal-per-batch was never measured to cost anything @ §B.9 scale. Reopen behind a number, ⊥ behind the idea|V21,V27,T13
 T19|x|`src/monitor.cpp:75` `buf_size` == `sizeof(inotify_event) * 4` == 64 B & `_read` returns first event only. rest of queue dropped silently, & `inotify(7)` fails `read()` `EINVAL` when buffer ⊥ hold next event ∴ filename ≥ ~47 chars breaks it. size buffer by `NAME_MAX`, loop over all events|V21,V22
 T20|x|`src/monitor.cpp:24` watches `.` only, ⊥ recursive, but `files::list` is recursive. traversal hides gap today; event-driven would stop syncing subdirectories. watch per directory or use `fanotify`. `fanotify` rejected — `FAN_MARK_FILESYSTEM` needs `CAP_SYS_ADMIN`, run image is `USER syncfs` uid 1000 (T35). watch per dir + resync on dir create/move/delete, `monitor` now own static lib ∴ unit-testable|V21,V23,V14,V34,B7
-T16|.|V2 relies on `assert` ∴ vanishes under `NDEBUG`. promote to real check. §B.5 = the release build silently peerless|V2,B5
-T17|.|alert loop logs `alert->message()` @ debug but default `alert_mask` hides peer & DHT categories ∴ blind during B1 triage. widen mask|R2,R3
+T16|x|V2 relies on `assert` ∴ vanishes under `NDEBUG`. promote to real check. §B.5 = the release build silently peerless|V2,B5
+T17|x|alert loop logs `alert->message()` @ debug but default `alert_mask` hides peer & DHT categories ∴ blind during B1 triage. widen mask|R2,R3
 T18|x|node & file count ceiling undocumented|C
 T21|x|v2-only torrent @ relative path depth 1 loses top dir on receiver. wire correct, load wrong. fix: carry relative path as 3rd wire part & derive `save_path`, or nest tree ≥ 2 deep|V25,B3
 T22|x|usage printed `syncf`, binary is `syncfs`. Fixed by `2acfd22` 2026-08-08, same day the row was written; row never flipped & §I carried the typo as fact until a `/check` caught it. Now `Usage: syncfs <peers file> <listen address>` (`src/syncfs.cpp:588`)|I
@@ -207,10 +207,10 @@ T23|x|`src/syncfs.cpp:236` `zmq::error_t` catch logs & falls off end of `main` �
 T24|x|`t.torrent_file.lock()` passed straight to `file_path`, deref'd unchecked ∴ expired weak_ptr = nullptr deref in stats print. Guard in `file_path` (`src/syncfs.cpp:98-100`), `<gone>` placeholder ∴ a torrent removed mid-snapshot still prints its counters, ⊥ crashes. The other 2 `.lock()` sites were already checked|V29
 T25|x|`src/monitor.cpp:118` `discard()` swallows `read()` error via `[[maybe_unused]]`. inotify read failure invisible|V22
 T26|.|inotify poll 50 ms then ZMQ poll 100 ms, serial per iteration ∴ ≤ 150 ms idle latency & receive starves while waiting on inotify. single poll over both fds|V26
-T27|.|`discovery::parse` on missing/unreadable file returns empty vector, ⊥ error. only `assert` catches. §B.5 shows the failure mode is real, ⊥ theoretical|V2,I,T12,T16,B5
-T28|.|`tests/performance/perf_one_to_one_gb_file_test.py:96` test named `test_benchmark_sync_one_to_many`, is one-to-one|-
+T27|x|`discovery::parse` on missing/unreadable file returns empty vector, ⊥ error. only `assert` catches. §B.5 shows the failure mode is real, ⊥ theoretical|V2,I,T12,T16,B5
+T28|x|`tests/performance/perf_one_to_one_gb_file_test.py:96` test named `test_benchmark_sync_one_to_many`, is one-to-one|-
 T29|x|CPM deps link shared. `BUILD_SHARED_LIBS OFF` @ top of `syncfs_setup_dependencies`, libzmq `BUILD_SHARED OFF`, swap `cppzmq` → `cppzmq-static` in `src/CMakeLists.txt`, `-static-libstdc++ -static-libgcc` on `syncfs`, `libstdc++-static` in `Containerfile`. verify `ldd`. (`-static-libstdc++` + `libstdc++-static` reverted @ §T.34)|V30,C
-T30|.|`tests/integration/CMakeLists.txt:6` & `tests/performance/CMakeLists.txt:6` set `PATH=$<TARGET_FILE_DIR:syncfs>:${CMAKE_SYSTEM_PREFIX_PATH}`. `CMAKE_SYSTEM_PREFIX_PATH` is a `;`-list of prefixes (`/usr/local;/usr`), ⊥ a PATH ∴ `/usr/bin` never reachable. only `syncfs` resolves; ∀ other tool need absolute path (see `static_link_test.py::find_ldd`)|I,V30
+T30|x|`tests/integration/CMakeLists.txt:6` & `tests/performance/CMakeLists.txt:6` set `PATH=$<TARGET_FILE_DIR:syncfs>:${CMAKE_SYSTEM_PREFIX_PATH}`. `CMAKE_SYSTEM_PREFIX_PATH` is a `;`-list of prefixes (`/usr/local;/usr`), ⊥ a PATH ∴ `/usr/bin` never reachable. only `syncfs` resolves; ∀ other tool need absolute path (see `static_link_test.py::find_ldd`)|I,V30
 T31|x|poetry venv location differ build vs test. `poetry-install` target write `/root/.cache/pypoetry/virtualenvs` (container-local, lost on image rebuild); ctest env set `POETRY_VIRTUALENVS_IN_PROJECT=true` ∴ read `.venv` on mounted volume. fresh image → `No module named pytest`. pin one location|I,T6
 T32|x|§I listed ctest name `syncfs-update` & `make test-update`, neither exist. resolved §I side: both dropped, `test-integration` added. ⊥ new test written — update coverage lives in `syncfs-integration` + `protocol-unit` §V.35|I,V35
 T33|x|dep `install()` rules leaked ∴ 17030 files in prefix. `EXCLUDE_FROM_ALL YES` ∀ `cpmaddpackage`, drop `syncfs_package_project` for plain `install(TARGETS syncfs RUNTIME …)`, delete `cmake/PackageProject.cmake`. now 1 file|V31,C,R8
