@@ -23,12 +23,24 @@ add_library(sink STATIC sink.cpp)
 target_include_directories(sink PUBLIC ${CMAKE_SOURCE_DIR}/include/sink)
 target_link_libraries(sink PRIVATE cppzmq-static)
 
+# The listing is a library of its own so a test can link it: it is the only
+# thing that decides what a change even is.
+add_library(files STATIC files.cpp)
+target_include_directories(files PUBLIC ${CMAKE_SOURCE_DIR}/include)
+
+# Likewise the peer set: what it does with a file it cannot read decides whether
+# the daemon starts with peers or with none (B5).
+add_library(discovery STATIC discovery.cpp)
+target_include_directories(discovery PUBLIC ${CMAKE_SOURCE_DIR}/include)
+
 add_library(monitor STATIC monitor.cpp)
 target_include_directories(monitor PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(monitor PRIVATE spdlog::spdlog)
 
-add_executable(syncfs syncfs.cpp files.cpp discovery.cpp)
+add_executable(syncfs syncfs.cpp)
 target_include_directories(syncfs PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(syncfs PRIVATE discovery)
+target_link_libraries(syncfs PRIVATE files)
 target_link_libraries(syncfs PRIVATE monitor)
 target_link_libraries(syncfs PRIVATE protocol)
 target_link_libraries(syncfs PRIVATE source)

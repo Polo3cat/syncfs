@@ -28,3 +28,18 @@ target_link_libraries(source-test GTest::gtest_main source utils torrent-rasterb
 add_test(NAME source-unit COMMAND source-test)
 set_tests_properties(source-unit PROPERTIES TIMEOUT ${unit_timeout})
 target_compile_options(source-test PRIVATE $<$<CONFIG:Debug>:-glldb>)
+
+add_executable(files-test files_test.cpp)
+target_link_libraries(files-test GTest::gtest_main files)
+add_test(NAME files-unit COMMAND files-test)
+set_tests_properties(files-unit PROPERTIES TIMEOUT ${unit_timeout})
+
+add_executable(sink-test sink_test.cpp)
+target_link_libraries(sink-test GTest::gtest_main sink cppzmq-static)
+add_test(NAME sink-unit COMMAND sink-test)
+set_tests_properties(sink-unit PROPERTIES TIMEOUT ${unit_timeout})
+
+add_executable(discovery-test discovery_test.cpp)
+target_link_libraries(discovery-test GTest::gtest_main discovery)
+add_test(NAME discovery-unit COMMAND discovery-test)
+set_tests_properties(discovery-unit PROPERTIES TIMEOUT ${unit_timeout})
