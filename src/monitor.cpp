@@ -115,7 +115,12 @@ constexpr auto is_dir = static_cast<uint32_t>(IN_ISDIR);
 constexpr auto created = static_cast<uint32_t>(IN_CREATE);
 
 auto _wait(int fd) -> int {
-  constexpr int timeout_ms = 50;
+  // Non-blocking: the sync loop blocks in the ZMQ poller instead, so an
+  // inbound message no longer waits out an inotify timeout first (V26). The
+  // poll itself has to stay even at zero, because inotify_init() hands back a
+  // blocking descriptor and the read below it would park the loop for ever
+  // with nothing queued (R31).
+  constexpr int timeout_ms = 0;
   pollfd p{.fd = fd, .events = POLLIN, .revents = 0};
   int const avail = ::poll(&p, 1, timeout_ms);
   if (avail == -1) {

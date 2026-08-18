@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -8,6 +9,7 @@
 #include <string>
 #include <sys/inotify.h>
 #include <system_error>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -16,16 +18,24 @@
 #include <monitor.h>
 
 namespace {
-// Monitor::wait() polls with a 50 ms timeout, so this is a 2 s ceiling.
-constexpr int max_polls = 40;
+// Monitor::wait() does not block (V26), so the ceiling has to come from the
+// clock: a count of attempts would be spent in microseconds, which turns every
+// positive assertion below into a flake and leaves V34's negative one asserting
+// nothing at all. The interval is what keeps the wait from being a spin.
+constexpr auto event_deadline = std::chrono::seconds{2};
+constexpr auto poll_interval = std::chrono::milliseconds{5};
 
 auto wait_for_event(monitor::Monitor &m) -> bool {
-  for (int i = 0; i < max_polls; ++i) {
+  const auto end = std::chrono::steady_clock::now() + event_deadline;
+  while (true) {
     if (m.wait()) {
       return true;
     }
+    if (std::chrono::steady_clock::now() >= end) {
+      return false;
+    }
+    std::this_thread::sleep_for(poll_interval);
   }
-  return false;
 }
 
 // The directories files::list() would descend into, sorted the same way
@@ -188,6 +198,26 @@ TEST_F(Monitor, V34FileCreationAloneDoesNotDriveSync) {
   ofs << "content\n";
   ofs.close();
   ASSERT_TRUE(wait_for_event(m));
+}
+
+TEST_F(Monitor, V26WaitDoesNotBlock) {
+  // The ZMQ poller is the sync loop's one blocking point, so this wait only
+  // reports what inotify already has and returns (V26). Repeated, because a
+  // single call is too short to tell a poll that returned at once from one that
+  // slept: at the 50 ms this used to wait, twenty of them cost a second.
+  constexpr int calls = 20;
+  constexpr auto budget = std::chrono::milliseconds{25};
+  monitor::Monitor m;
+
+  const auto started = std::chrono::steady_clock::now();
+  for (int call = 0; call < calls; ++call) {
+    static_cast<void>(m.wait());
+  }
+  const auto spent = std::chrono::steady_clock::now() - started;
+
+  ASSERT_LT(spent, budget)
+      << std::chrono::duration_cast<std::chrono::milliseconds>(spent).count()
+      << " ms for " << calls << " calls";
 }
 
 TEST_F(Monitor, V23NewSubdirectoryBecomesWatched) {

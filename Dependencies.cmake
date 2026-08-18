@@ -26,7 +26,12 @@ function(syncfs_setup_dependencies)
     GITHUB_REPOSITORY "zeromq/libzmq"
     PATCHES patches/libzmq-cmake.patch
     EXCLUDE_FROM_ALL YES
-    OPTIONS "BUILD_TESTS OFF" "BUILD_SHARED OFF"
+    # ENABLE_DRAFTS is not a preference: zmq::poller_t is draft API and the sink
+    # is built on it. libzmq defaults the option ON only when
+    # ${CMAKE_SOURCE_DIR}/.git exists, and under add_subdirectory that path is
+    # this project's rather than libzmq's, so a build from a tarball or a
+    # git-less export would drop zmq_poller_* and fail to compile (R30).
+    OPTIONS "BUILD_TESTS OFF" "BUILD_SHARED OFF" "ENABLE_DRAFTS ON"
   )
 
   cpmaddpackage(

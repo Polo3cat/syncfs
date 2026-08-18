@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstddef>
 #include <expected>
 #include <string>
@@ -100,6 +101,24 @@ TEST(Sink, AMessageWithMorePartsThanTheCapIsRejected) {
   ASSERT_FALSE(received.has_value());
   ASSERT_EQ(received.error(),
             "Did not receive the expected number of messages");
+}
+
+TEST(Sink, V26ReceiveReadyPacesTheLoop) {
+  // The other half of V26: the inotify poll returns at once, so this poll is
+  // the only thing that keeps the sync loop from free-running. Nothing about
+  // the current timeout is being changed here, which is the point: dropping it
+  // to zero as well would leave the iteration with no blocking call and burn a
+  // core to fire the same timestamp-gated work no sooner.
+  constexpr auto floor = std::chrono::milliseconds{90};
+  Wire wire{"tcp://127.0.0.1:3104"};
+
+  const auto started = std::chrono::steady_clock::now();
+  ASSERT_FALSE(wire.listener.receive_ready());
+  const auto spent = std::chrono::steady_clock::now() - started;
+
+  ASSERT_GE(spent, floor)
+      << std::chrono::duration_cast<std::chrono::milliseconds>(spent).count()
+      << " ms";
 }
 
 TEST(Sink, NothingToReceiveIsNotAFailure) {

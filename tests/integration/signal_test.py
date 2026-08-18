@@ -18,8 +18,8 @@ peer_addr = "127.0.0.1:5121"
 writer_addr = "127.0.0.1:5122"
 reader_addr = "127.0.0.1:5123"
 
-# One idle loop iteration polls inotify for 50 ms and ZMQ for 100 ms (V26),
-# so a stop request is picked up well inside a second.
+# One idle loop iteration blocks only in the ZMQ poll, for 100 ms (V26), so a
+# stop request is picked up well inside a second.
 shutdown_budget = 5
 
 # Long enough that a stop which is merely slow is still measured. A budget used

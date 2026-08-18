@@ -23,7 +23,7 @@ two_node_deadline = 5
 many_node_deadline = 1
 
 # How long the poll leaves between attempts. The daemon's idle loop iteration is
-# at most 150 ms (V26), so this is well inside it.
+# at most 100 ms (V26), so this is well inside it.
 poll_interval = 0.05
 
 
