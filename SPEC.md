@@ -187,10 +187,10 @@ T3|x|`perf_one_to_one_gb_file_test` makes its deadline. Closed by §B.7 (partial
 T4|.|`tests/integration/many_syncfs_test.py:69` `test_one_syncf_sends_to_many_other` has ⊥ assert. loop breaks either way, test can never fail|V18
 T5|x|downloader writes file → own inotify fires → republishes identical content → duplicate info hash, wasted hash & traffic. suppress echo|V13,R5,V36
 T6|.|integration tests wait fixed `time.sleep`. flaky & slow. poll until deadline|V18,V19
-T7|.|`README.md` still `cmake_template` boilerplate. rewrite for syncfs|G,I
+T7|x|`README.md` still `cmake_template` boilerplate. rewrite for syncfs|G,I
 T8|.|no unit test for `protocol::act`|V3,V4,V7,V8
 T9|.|no unit test for `files.cpp` — `list`, `diff`, `diff_name`, `intersection_name`|V10,V11
-T10|.|no unit test for `monitor.cpp`|V14,V15
+T10|~|no unit test for `monitor.cpp`|V14,V15
 T11|.|no unit test for `sink.cpp` — `receive` short-message path|-
 T12|.|no test for `discovery::parse` — 512-char truncation, blank line, missing file|I
 T13|x|`files::append` & `files::remove` defined, called nowhere. They were §T.15's incremental helpers ∴ deleted with it (`src/files.cpp`, `include/files.h`), along with the `last_write_time(path)` overload only `append` used. ⊥ built, removed|V21,T15
@@ -200,7 +200,7 @@ T19|x|`src/monitor.cpp:75` `buf_size` == `sizeof(inotify_event) * 4` == 64 B & `
 T20|x|`src/monitor.cpp:24` watches `.` only, ⊥ recursive, but `files::list` is recursive. traversal hides gap today; event-driven would stop syncing subdirectories. watch per directory or use `fanotify`. `fanotify` rejected — `FAN_MARK_FILESYSTEM` needs `CAP_SYS_ADMIN`, run image is `USER syncfs` uid 1000 (T35). watch per dir + resync on dir create/move/delete, `monitor` now own static lib ∴ unit-testable|V21,V23,V14,V34,B7
 T16|.|V2 relies on `assert` ∴ vanishes under `NDEBUG`. promote to real check. §B.5 = the release build silently peerless|V2,B5
 T17|.|alert loop logs `alert->message()` @ debug but default `alert_mask` hides peer & DHT categories ∴ blind during B1 triage. widen mask|R2,R3
-T18|.|node & file count ceiling undocumented|C
+T18|x|node & file count ceiling undocumented|C
 T21|x|v2-only torrent @ relative path depth 1 loses top dir on receiver. wire correct, load wrong. fix: carry relative path as 3rd wire part & derive `save_path`, or nest tree ≥ 2 deep|V25,B3
 T22|x|usage printed `syncf`, binary is `syncfs`. Fixed by `2acfd22` 2026-08-08, same day the row was written; row never flipped & §I carried the typo as fact until a `/check` caught it. Now `Usage: syncfs <peers file> <listen address>` (`src/syncfs.cpp:588`)|I
 T23|x|`src/syncfs.cpp:236` `zmq::error_t` catch logs & falls off end of `main` — ⊥ `return EXIT_FAILURE` ∴ exit code 0 on fatal ZMQ error|V28,B4
@@ -211,7 +211,7 @@ T27|.|`discovery::parse` on missing/unreadable file returns empty vector, ⊥ er
 T28|.|`tests/performance/perf_one_to_one_gb_file_test.py:96` test named `test_benchmark_sync_one_to_many`, is one-to-one|-
 T29|x|CPM deps link shared. `BUILD_SHARED_LIBS OFF` @ top of `syncfs_setup_dependencies`, libzmq `BUILD_SHARED OFF`, swap `cppzmq` → `cppzmq-static` in `src/CMakeLists.txt`, `-static-libstdc++ -static-libgcc` on `syncfs`, `libstdc++-static` in `Containerfile`. verify `ldd`. (`-static-libstdc++` + `libstdc++-static` reverted @ §T.34)|V30,C
 T30|.|`tests/integration/CMakeLists.txt:6` & `tests/performance/CMakeLists.txt:6` set `PATH=$<TARGET_FILE_DIR:syncfs>:${CMAKE_SYSTEM_PREFIX_PATH}`. `CMAKE_SYSTEM_PREFIX_PATH` is a `;`-list of prefixes (`/usr/local;/usr`), ⊥ a PATH ∴ `/usr/bin` never reachable. only `syncfs` resolves; ∀ other tool need absolute path (see `static_link_test.py::find_ldd`)|I,V30
-T31|.|poetry venv location differ build vs test. `poetry-install` target write `/root/.cache/pypoetry/virtualenvs` (container-local, lost on image rebuild); ctest env set `POETRY_VIRTUALENVS_IN_PROJECT=true` ∴ read `.venv` on mounted volume. fresh image → `No module named pytest`. pin one location|I,T6
+T31|x|poetry venv location differ build vs test. `poetry-install` target write `/root/.cache/pypoetry/virtualenvs` (container-local, lost on image rebuild); ctest env set `POETRY_VIRTUALENVS_IN_PROJECT=true` ∴ read `.venv` on mounted volume. fresh image → `No module named pytest`. pin one location|I,T6
 T32|x|§I listed ctest name `syncfs-update` & `make test-update`, neither exist. resolved §I side: both dropped, `test-integration` added. ⊥ new test written — update coverage lives in `syncfs-integration` + `protocol-unit` §V.35|I,V35
 T33|x|dep `install()` rules leaked ∴ 17030 files in prefix. `EXCLUDE_FROM_ALL YES` ∀ `cpmaddpackage`, drop `syncfs_package_project` for plain `install(TARGETS syncfs RUNTIME …)`, delete `cmake/PackageProject.cmake`. now 1 file|V31,C,R8
 T34|x|installed binary 101 MB. 94 MB of it = `.debug_*` (preset build type `RelWithDebInfo`), `.text` 5.2 MB (libtorrent 3.4 MB, libstdc++ 1.2 MB). fixes: `cmake --install --strip`; `-ffunction-sections -fdata-sections` in top `CMakeLists.txt` before `include(Dependencies.cmake)` (deps sectioned too — `--gc-sections` cuts @ section granularity, LTO prunes only inside its graph) + `-fuse-ld=lld -Wl,--gc-sections -Wl,--icf=safe` on `syncfs`; libtorrent feature trim; drop `-static-libstdc++`. `--icf=safe` ⊥ `all`: `all` folds address-taken fns ∴ fn-pointer compare silently true; `safe` reads clang `.llvm_addrsig`. result 101 MB → 4.3 MB, `.text` 5.2 → 3.9 MB|V30,C
