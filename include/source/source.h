@@ -19,8 +19,9 @@ struct Source {
   mutable zmq::socket_t client;
   std::pair<std::string, int> addr;
   // Where this node publishes, in the form the peers file uses. It rides on
-  // both reconcile verbs: a root hash nobody can answer is worth nothing, and
-  // the digest that answers it is the reply.
+  // the root hash alone: a hash nobody can answer is worth nothing, while the
+  // digest that answers one is addressed at its reader already and needs to
+  // name nobody.
   std::string endpoint;
 
   explicit Source(zmq::socket_t &&client,
@@ -49,7 +50,9 @@ struct Source {
   // in full, addressed at the one peer whose root hash differed. Broadcasting
   // it costs every other peer a message of the same size for nothing, every
   // round, for as long as the two of them disagree. A digest is bookkeeping, so
-  // unlike a repair there is nothing in it for a second reader.
+  // unlike a repair there is nothing in it for a second reader. It carries no
+  // sender: three parts, the address in the first of them and the two sets
+  // after it.
   void digest(utils::Endpoint target, std::string_view held,
               std::string_view deleted) const;
 

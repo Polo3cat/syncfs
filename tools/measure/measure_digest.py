@@ -82,7 +82,7 @@ def measure(files: int, depth_one: bool, budget: float = 90.0) -> dict | None:
                         "depth_one": depth_one,
                         "parts": [len(p) for p in parts],
                         "total": sum(len(p) for p in parts),
-                        "held_bytes": len(parts[2]),
+                        "held_bytes": len(parts[1]),
                         "path_chars": sum(len(n) + 2 for n in names),
                     }
             return None
@@ -98,10 +98,7 @@ def measure(files: int, depth_one: bool, budget: float = 90.0) -> dict | None:
 
 
 def main() -> None:
-    print(
-        "files depth  part0 part1  part2(held) part3(tomb)  total  "
-        "bytes/path"
-    )
+    print("files depth  part0  part1(held) part2(tomb)  total  bytes/path")
     for files, depth_one in [
         (0, False),
         (10, False),
@@ -118,8 +115,8 @@ def main() -> None:
         p = r["parts"]
         per = r["held_bytes"] / files if files else 0.0
         print(
-            f"{r['files']:5} {str(r['depth_one']):>5}  {p[0]:5} {p[1]:5} "
-            f"{p[2]:11} {p[3]:11}  {r['total']:6}  {per:10.1f}"
+            f"{r['files']:5} {str(r['depth_one']):>5}  {p[0]:5} "
+            f"{p[1]:11} {p[2]:11}  {r['total']:6}  {per:10.1f}"
         )
         sys.stdout.flush()
 

@@ -151,7 +151,7 @@ constexpr std::array<verb_t, 4> verbs{
     {{.name = "create", .parts = 4},
      {.name = "remove", .parts = remove_parts},
      {.name = "state", .parts = 3},
-     {.name = "digest", .parts = 4}}};
+     {.name = "digest", .parts = 3}}};
 
 // The first part carries the verb and, for an addressed one, the endpoint it is
 // meant for. Comparing the whole of it would have every addressed digest report

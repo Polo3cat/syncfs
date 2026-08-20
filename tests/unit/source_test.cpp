@@ -229,18 +229,20 @@ TEST(Source, V56DigestIsAddressedToOnePeer) {
   const auto held = std::string{"./f"} + '\0' + "1700" + '\0';
   const auto deleted = std::string{"./g"} + '\0' + "1800" + '\0';
 
-  std::array<zmq::message_t, 4> recv_msgs{};
+  std::array<zmq::message_t, 3> recv_msgs{};
   ASSERT_TRUE(announce_until_received(wire.subscriber, recv_msgs, [&] -> void {
     sender.digest(utils::Endpoint{target}, held, deleted);
   }));
 
   ASSERT_EQ(recv_msgs.at(0).to_string(),
             utils::address("digest", utils::Endpoint{target}));
-  // The reply address stays part1: the repair and the next round's digest both
-  // go back to whoever asked.
-  ASSERT_EQ(recv_msgs.at(1).to_string(), endpoint);
-  ASSERT_EQ(recv_msgs.at(2).to_string(), held);
-  ASSERT_EQ(recv_msgs.at(3).to_string(), deleted);
+  // No sender address rides here. The one that used to sit at part1 was read by
+  // nobody: the repair that answers goes out broadcast and needs no address,
+  // and the next round's peer is drawn off the state record. What proves who
+  // sent this is the subscription that let it through, matched at the
+  // publisher, and that cannot be forged by a part of the message (V56, V58).
+  ASSERT_EQ(recv_msgs.at(1).to_string(), held);
+  ASSERT_EQ(recv_msgs.at(2).to_string(), deleted);
 }
 
 TEST(Source, V58TrailingNulPreventsPortPrefixMatch) {
@@ -256,7 +258,7 @@ TEST(Source, V58TrailingNulPreventsPortPrefixMatch) {
   // Its own digest first, which is what proves the pair is connected: a socket
   // that receives nothing because it never finished subscribing would pass the
   // half below for the wrong reason.
-  std::array<zmq::message_t, 4> recv_msgs{};
+  std::array<zmq::message_t, 3> recv_msgs{};
   ASSERT_TRUE(announce_until_received(wire.subscriber, recv_msgs, [&] -> void {
     sender.digest(utils::Endpoint{shorter}, "", "");
   }));
@@ -266,7 +268,7 @@ TEST(Source, V58TrailingNulPreventsPortPrefixMatch) {
   // And now the neighbour's. Without the NUL closing the endpoint the shorter
   // port is a prefix of the longer one, and this node would take every digest
   // meant for the node on 5555.
-  std::array<zmq::message_t, 4> stray{};
+  std::array<zmq::message_t, 3> stray{};
   ASSERT_TRUE(never_received(wire.subscriber, stray, [&] -> void {
     sender.digest(utils::Endpoint{longer}, "", "");
   }));

@@ -114,9 +114,12 @@ void Source::digest(utils::Endpoint target, std::string_view held,
   // message at all.
   const auto addressed = utils::address("digest", target);
 
+  // Nothing here says who sent it. The address that used to ride at part1 was
+  // written by this end and read by neither: the repair that answers goes out
+  // broadcast, and the peer to ask next round is drawn off the state record.
+  // What proves the sender is the subscription that let the message through,
+  // matched at the publisher, which no part of the message can forge.
   client.send(zmq::const_buffer(addressed.data(), addressed.size()),
-              zmq::send_flags::sndmore);
-  client.send(zmq::const_buffer(endpoint.data(), endpoint.size()),
               zmq::send_flags::sndmore);
   client.send(zmq::const_buffer(held.data(), held.size()),
               zmq::send_flags::sndmore);

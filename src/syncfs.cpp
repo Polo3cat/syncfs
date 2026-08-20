@@ -340,8 +340,8 @@ void read_digest(const std::vector<zmq::message_t> &v, lt::session &session,
                  files::file_map_t &former,
                  reconcile::tombstone_map_t &tombstones,
                  protocol::repairs_t &repairs) {
-  const auto held = reconcile::decode_held(v.at(2).to_string_view());
-  const auto deleted = reconcile::decode_tombstones(v.at(3).to_string_view());
+  const auto held = reconcile::decode_held(v.at(1).to_string_view());
+  const auto deleted = reconcile::decode_tombstones(v.at(2).to_string_view());
 
   // Adoption comes first. The other order would have this node repair a file
   // back to the very peer that has just said the file is dead.

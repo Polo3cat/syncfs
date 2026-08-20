@@ -271,6 +271,12 @@ TEST_F(Protocol, V3PartCountIsPerVerb) {
   ASSERT_EQ(protocol::act(message_of("digest", 2), session, tombstones, applied)
                 .error(),
             "Wrong protocol length.");
+  // A digest carries no sender: the endpoint it used to hold at part1 was
+  // written by one end and read by neither, and the count that admitted it is
+  // the wire break T59 spent (V56, V58, V60).
+  ASSERT_EQ(protocol::act(message_of("digest", 4), session, tombstones, applied)
+                .error(),
+            "Wrong protocol length.");
   ASSERT_EQ(protocol::act({}, session, tombstones, applied).error(),
             "Wrong protocol length.");
 
@@ -279,7 +285,7 @@ TEST_F(Protocol, V3PartCountIsPerVerb) {
       protocol::act(message_of("state", 3), session, tombstones, applied)
           .has_value());
   ASSERT_TRUE(
-      protocol::act(message_of("digest", 4), session, tombstones, applied)
+      protocol::act(message_of("digest", 3), session, tombstones, applied)
           .has_value());
 
   const auto file = std::filesystem::path{"important_file"};
@@ -316,14 +322,14 @@ TEST_F(Protocol, V58AddressedDigestIsReadAsItsVerb) {
   // so every digest a peer addressed here would be thrown away as a verb nobody
   // knows, and the reconciliation would never exchange anything.
   const auto addressed =
-      addressed_message_of("digest", "tcp://127.0.0.1:5555", 4);
+      addressed_message_of("digest", "tcp://127.0.0.1:5555", 3);
   const auto r = protocol::act(addressed, session, tombstones, applied);
   ASSERT_TRUE(r.has_value());
   ASSERT_EQ(r->verb, "digest");
 
   // The count is still the verb's own, and still judged.
   ASSERT_EQ(
-      protocol::act(addressed_message_of("digest", "tcp://127.0.0.1:5555", 3),
+      protocol::act(addressed_message_of("digest", "tcp://127.0.0.1:5555", 4),
                     session, tombstones, applied)
           .error(),
       "Wrong protocol length.");
