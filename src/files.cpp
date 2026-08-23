@@ -30,17 +30,34 @@ auto list() -> files::file_map_t {
   // pointed to by the begin iterator is true with the predicate
   // on the actual iteration. The value changes because the entry may
   // change on disk.
-  auto entries_with_times =
-      std::views::all(std::filesystem::recursive_directory_iterator(".")) |
-      std::views::transform([](const auto &entry) -> auto {
-        return std::pair(entry, last_write_time(entry));
-      }) |
-      std::ranges::to<std::vector>();
+  //
+  // The walk itself reports its errors rather than throwing them, the same way
+  // Monitor::resync_watches walks the same tree: deleting a subtree inside the
+  // sync root wakes the loop through inotify, and the listing that follows
+  // races whatever is still being unlinked. On the throwing iterator that race
+  // leaves the sync loop, main catches it and the daemon exits - V28 working as
+  // designed and the process gone anyway (V66, B8, B16). A listing that comes
+  // back short costs one diff round, which the next one repairs.
+  auto entries_with_times = std::vector<std::pair<
+      std::filesystem::directory_entry,
+      std::expected<std::filesystem::file_time_type, std::error_code>>>{};
+  std::error_code err;
+  auto entry = std::filesystem::recursive_directory_iterator(
+      ".", std::filesystem::directory_options::none, err);
+  const auto last = std::filesystem::recursive_directory_iterator{};
+  while (!err && entry != last) {
+    entries_with_times.emplace_back(*entry, last_write_time(*entry));
+    entry.increment(err);
+  }
 
   return entries_with_times |
          std::views::filter([](const auto &entry_time) -> auto {
-           return entry_time.first.is_regular_file() &&
-                  !entry_time.first.is_symlink() &&
+           // Every question about the entry is asked the same way: a status
+           // that cannot be read is an entry left out, never an exception out
+           // of the loop.
+           std::error_code status_err;
+           return entry_time.first.is_regular_file(status_err) && !status_err &&
+                  !entry_time.first.is_symlink(status_err) && !status_err &&
                   entry_time.second.has_value();
          }) |
          std::views::transform([](const auto &entry_time) -> auto {

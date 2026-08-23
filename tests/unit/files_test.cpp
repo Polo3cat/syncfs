@@ -2,6 +2,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -134,6 +135,60 @@ TEST_F(Files, V11EntriesCarryTheTimeThatWasRead) {
 
   stop.test_and_set();
   churn.join();
+}
+
+TEST_F(Files, V66ListingSurvivesADirectoryRemovedUnderIt) {
+  // The tree moving under the walk is this daemon's own workload: deleting a
+  // subtree wakes the loop through inotify and the listing that follows races
+  // whatever is still being unlinked. On the throwing iterator that race is a
+  // dead daemon - the exception leaves the sync loop, main catches it and exits
+  // failure, which is V28 working as designed and the process gone anyway (B8,
+  // B16). A listing that comes back short costs one diff round instead.
+  constexpr size_t dirs = 32;
+  constexpr size_t per_dir = 4;
+  auto churned = [](size_t i) -> std::filesystem::path {
+    return std::filesystem::path{"./b"} / std::to_string(i);
+  };
+  auto fill = [&churned](size_t i) -> void {
+    std::error_code err;
+    std::filesystem::create_directories(churned(i) / "deeper", err);
+    for (size_t f = 0; f < per_dir; ++f) {
+      write_file(churned(i) / "deeper" / std::to_string(f), "content");
+    }
+  };
+  for (size_t i = 0; i < dirs; ++i) {
+    fill(i);
+  }
+
+  auto stop = std::atomic_flag{};
+  auto churn = std::thread{[&stop, &churned, &fill] -> void {
+    while (!stop.test()) {
+      for (size_t i = 0; i < dirs; ++i) {
+        std::error_code err;
+        std::filesystem::remove_all(churned(i), err);
+        fill(i);
+      }
+    }
+  }};
+
+  // The thread has to be joined before anything can fail the test: an early
+  // return here would leave it joinable and take the whole binary down with it.
+  std::string thrown;
+  for (int round = 0; round < 40 && thrown.empty(); ++round) {
+    try {
+      for (const auto &[path, time] : files::list()) {
+        EXPECT_FALSE(path.empty());
+        EXPECT_NE(time, std::filesystem::file_time_type{}) << path.native();
+      }
+    } catch (const std::exception &e) {
+      thrown = e.what();
+    }
+  }
+
+  stop.test_and_set();
+  churn.join();
+
+  ASSERT_TRUE(thrown.empty()) << "the listing threw: " << thrown;
 }
 
 TEST_F(Files, DiffReportsWhatTheOtherSideDoesNotHold) {
