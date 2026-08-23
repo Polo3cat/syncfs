@@ -458,3 +458,78 @@ def test_v55_v60_a_restarted_swarm_repairs_a_late_joiner(
             f"restarted node {name} held no torrent at all, so it was seeding "
             "nothing and the late joiner pulled from a swarm one node wide"
         )
+
+
+# Its own block again: this one wants two nodes writing the same bytes at the
+# same path, so it cannot share ports with anything above.
+twin_a_addr = "localhost:5220"
+twin_b_addr = "localhost:5221"
+
+# The whole window a digest has to appear in, if the two are still disagreeing:
+# the first root hash needs the quiescence window and a period, and every round
+# after that is one period more.
+twin_settle = quiescent_state_delay + 20
+
+
+def test_v65_identical_content_written_twice_converges(tmp_dir_a, tmp_dir_b):
+    """V65: two nodes writing the same bytes at the same path a moment apart
+    hold identical content under different modification times. The newer
+    announcement wins and is applied, but add_torrent deduplicates on the info
+    hash and hands back the handle it already had, so nothing transfers,
+    nothing finishes, no cache is flushed and the alert that puts the origin
+    time on the file never comes.
+
+    The older copy then keeps its own time for ever. V46 folds the time into
+    the root hash, so the two mismatch every round, the holder sees the older
+    copy as a gap and repairs it, and the repair is deduplicated on arrival: a
+    digest and an announcement every period, for ever, over a file both ends
+    already agree on byte for byte.
+    """
+    content = "1234"
+    file_a = PosixPath(tmp_dir_a) / "twin"
+    file_b = PosixPath(tmp_dir_b) / "twin"
+
+    peers_a = peers_file(twin_b_addr)
+    peers_b = peers_file(twin_a_addr)
+
+    node_a = start(peers_a, twin_a_addr, tmp_dir_a)
+    node_b = start(peers_b, twin_b_addr, tmp_dir_b)
+    try:
+        # A publisher drops what it sends before its subscribers have finished
+        # connecting, and the crossing announcements are the point here.
+        time.sleep(1)
+        file_a.write_text(content)
+        # Far enough apart to be two different times on any filesystem, and
+        # close enough that both announcements are in flight.
+        time.sleep(1)
+        file_b.write_text(content)
+
+        converged = wait_for(
+            lambda: file_a.exists()
+            and file_b.exists()
+            and file_a.stat().st_mtime_ns == file_b.stat().st_mtime_ns,
+            30,
+        )
+
+        # And then long enough for several reconcile rounds, so that a pair
+        # still disagreeing has every chance to say so.
+        time.sleep(twin_settle)
+    finally:
+        node_a.stop()
+        node_b.stop()
+
+    assert file_a.read_text() == content
+    assert file_b.read_text() == content
+    assert converged, (
+        "the two hold the same bytes under different times: "
+        f"{file_a.stat().st_mtime_ns} against {file_b.stat().st_mtime_ns}"
+    )
+
+    # Agreeing on the bytes and on the time is agreeing on the root hash, so
+    # there is nothing left to ask anybody. A pair that never converges asks
+    # every round instead, one digest a period each, until one of them dies.
+    for name, node in (("A", node_a), ("B", node_b)):
+        assert len(node.digests()) <= 2, (
+            f"node {name} sent {len(node.digests())} digests over "
+            f"{twin_settle} seconds: the root hash is not converging"
+        )

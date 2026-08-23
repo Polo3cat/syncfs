@@ -40,6 +40,15 @@ struct outcome {
   std::optional<std::filesystem::path> created;
   std::filesystem::file_time_type origin{};
   lt::info_hash_t content;
+  // Whether the session already held this very content for this very path, in
+  // which case add_torrent handed back the handle it had and discarded the
+  // parameters (R5): no transfer follows, nothing finishes, no cache is flushed
+  // and the alert that puts the origin time back on the file never comes. The
+  // caller cannot work this out afterwards - the session looks the same either
+  // way - and without it the two nodes hold the same bytes under different
+  // times, which V46 folds into the root hash: they mismatch every round and
+  // the repair that answers changes nothing (V65).
+  bool already_held = false;
 };
 
 // What this node last applied for a path: the moment the copy it holds was

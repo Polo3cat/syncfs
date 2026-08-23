@@ -221,6 +221,43 @@ TEST_F(Protocol, V35IdenticalTorrentIsNotReadded) {
   ASSERT_EQ(torrents.front().info_hashes(), expected.ti->info_hashes());
 }
 
+TEST_F(Protocol, V65AlreadyHeldTorrentIsReported) {
+  auto session = offline_session();
+  const auto file = std::filesystem::path{"important_file"};
+
+  // The first announcement is a transfer: nothing here holds this content yet,
+  // so the alert that says the file reached disk is what stamps the origin time
+  // on it.
+  const auto buffer = torrent_buffer(file, "Important file content\n");
+  const auto first =
+      protocol::act(create_message(buffer), session, tombstones, applied);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_FALSE(first->already_held);
+
+  // The same content announced again, later. add_torrent deduplicates on the
+  // info hash and hands back the handle it already had (R5), so no transfer
+  // follows, no torrent finishes, no cache is flushed and no alert ever comes:
+  // the caller has to be told here or the origin time is never put on the file
+  // and the two nodes disagree about it for ever, repairing every round.
+  const auto later = "1700000000000000001";
+  const auto again =
+      protocol::act(create_message(buffer, "./important_file", later), session,
+                    tombstones, applied);
+  ASSERT_TRUE(again.has_value());
+  ASSERT_TRUE(again->already_held);
+  ASSERT_EQ(session.get_torrents().size(), 1);
+
+  // Different content for the same path is a transfer again: the old torrent
+  // goes and the new one has to move its bytes before anything can be stamped.
+  const auto changed =
+      torrent_buffer(file, "Different file content entirely\n", later);
+  const auto replaced =
+      protocol::act(create_message(changed, "./important_file", later), session,
+                    tombstones, applied);
+  ASSERT_TRUE(replaced.has_value());
+  ASSERT_FALSE(replaced->already_held);
+}
+
 TEST_F(Protocol, V38RemoveDropsTorrentForPath) {
   auto session = offline_session();
   const auto file = std::filesystem::path{"important_file"};

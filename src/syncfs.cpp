@@ -121,14 +121,18 @@ struct inbound_t {
 // every peer already has; without the stamp first, every entry of the
 // snapshot is stale the moment it is taken and the snapshot suppresses
 // nothing at all.
-void stamp_and_remember(inbound_t &inbound, const lt::torrent_handle &handle,
+//
+// The listing is told as well, and it has to be told rather than left to find
+// out: utimensat raises IN_ATTRIB alone, which is outside the mask (V14), so
+// moving a file's time wakes nothing and the next traversal may be a long way
+// off. Until then the root hash would be taken over a time the file no longer
+// has, and a hash the sender cannot match is a digest and a repair every round
+// for a file both ends already agree on (V65).
+void stamp_and_remember(inbound_t &inbound, files::file_map_t &former,
+                        const std::filesystem::path &path,
                         std::filesystem::file_time_type written_by) {
-  const auto path = protocol::held_path(handle);
-  if (!path) {
-    return;
-  }
   std::error_code err;
-  const auto before_stamp = std::filesystem::last_write_time(*path, err);
+  const auto before_stamp = std::filesystem::last_write_time(path, err);
   if (err) {
     return;
   }
@@ -145,21 +149,22 @@ void stamp_and_remember(inbound_t &inbound, const lt::torrent_handle &handle,
   // node has just received; the cost of the reverse is a lost write nobody can
   // see.
   if (before_stamp > written_by) {
-    inbound.origins.erase(*path);
+    inbound.origins.erase(path);
     spdlog::debug("\"{}\" was edited under its own transfer, keeping its time",
-                  path->native());
+                  path.native());
     return;
   }
-  if (const auto origin = inbound.origins.find(*path);
+  if (const auto origin = inbound.origins.find(path);
       origin != inbound.origins.end()) {
-    static_cast<void>(utils::stamp(*path, origin->second));
+    static_cast<void>(utils::stamp(path, origin->second));
     inbound.origins.erase(origin);
   }
-  const auto time = std::filesystem::last_write_time(*path, err);
+  const auto time = std::filesystem::last_write_time(path, err);
   if (err) {
     return;
   }
-  inbound.written.insert_or_assign(*path, time);
+  inbound.written.insert_or_assign(path, time);
+  former.insert_or_assign(path, time);
 }
 
 // The wall clock instant an alert was made at. libtorrent stamps its alerts
@@ -172,7 +177,8 @@ auto alert_time(const lt::alert *alert) -> std::filesystem::file_time_type {
   return utils::to_file_time(std::chrono::system_clock::now() - age);
 }
 
-void drain_alerts(lt::session &session, inbound_t &inbound) {
+void drain_alerts(lt::session &session, inbound_t &inbound,
+                  files::file_map_t &former) {
   auto alerts = std::vector<lt::alert *>{};
   session.pop_alerts(&alerts);
   for (const auto *alert : alerts) {
@@ -196,7 +202,9 @@ void drain_alerts(lt::session &session, inbound_t &inbound) {
     } else if (const auto *flushed =
                    lt::alert_cast<lt::cache_flushed_alert>(alert)) {
       if (flushed->handle.is_valid()) {
-        stamp_and_remember(inbound, flushed->handle, alert_time(alert));
+        if (const auto path = protocol::held_path(flushed->handle)) {
+          stamp_and_remember(inbound, former, *path, alert_time(alert));
+        }
       }
     }
   }
@@ -441,6 +449,17 @@ void receive_one(const sink::Sink &listener, lt::session &session,
   }
   if (r->created) {
     inbound.origins.insert_or_assign(*r->created, r->origin);
+    // Nothing is going to move for an announcement the session already held
+    // this content for: add_torrent handed back the handle it had, so no
+    // transfer starts, nothing finishes, no cache is flushed and the alert that
+    // would put the origin time on the file never comes (R5). Stamped here
+    // instead, or the two nodes hold the same bytes under different times for
+    // ever - V46 folds the time into the root hash, so they mismatch every
+    // round and the repair that answers is idempotent and useless (V65). The
+    // announcement won on being newer, so this only ever moves a time forward.
+    if (r->already_held) {
+      stamp_and_remember(inbound, former, *r->created, r->origin);
+    }
     // Every create this node applies passes here, its own included: it
     // subscribes to itself, so this is the one place the announcement for a
     // path is known whoever made it.
@@ -602,7 +621,7 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
     }
     if (std::atomic_flag_test_explicit(&alert_ready,
                                        std::memory_order::relaxed)) {
-      drain_alerts(session, inbound);
+      drain_alerts(session, inbound, former);
       std::atomic_flag_clear_explicit(&alert_ready, std::memory_order::relaxed);
     }
     if (file_monitor.wait()) {

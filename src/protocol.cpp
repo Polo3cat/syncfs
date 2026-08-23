@@ -94,17 +94,25 @@ auto torrents_at(lt::session &s, const std::filesystem::path &path)
 // and keeps seeding stale bytes for the very path the new one writes to.
 // Identical announcements are left alone, since removing and re-adding them
 // would only force a recheck and drop the swarm.
-void remove_stale_torrents(lt::session &s,
+//
+// Answers whether one of the torrents left standing is this very announcement,
+// which is the one thing the caller cannot read back out of the session
+// afterwards: add_torrent() will hand back the handle it already had and
+// nothing at all will happen, no transfer and so no alert (R5, V65).
+auto remove_stale_torrents(lt::session &s,
                            const std::filesystem::path &announced,
-                           const lt::add_torrent_params &added) {
+                           const lt::add_torrent_params &added) -> bool {
+  bool held = false;
   for (const auto &handle : torrents_at(s, announced)) {
     const auto info = handle.torrent_file();
     if (info->info_hashes() == added.ti->info_hashes()) {
+      held = true;
       continue;
     }
     // No delete_files: the new torrent overwrites the file in place.
     s.remove_torrent(handle);
   }
+  return held;
 }
 
 // Whether an announced file beats the copy already here. Newer wins, whatever
@@ -255,7 +263,7 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s,
     torrent.save_path = save_path_for(announced, file_path(torrent.ti));
     torrent.flags = lt::torrent_flags::auto_managed;
 
-    remove_stale_torrents(s, announced, torrent);
+    const bool held = remove_stale_torrents(s, announced, torrent);
 
     auto handle = s.add_torrent(torrent);
 
@@ -270,7 +278,8 @@ auto act(const std::vector<zmq::message_t> &v, lt::session &s,
                                    nodes.empty() ? "" : nodes),
                    .created = announced,
                    .origin = origin,
-                   .content = content};
+                   .content = content,
+                   .already_held = held};
   }
   // state and digest belong to the reconciliation, which reads them for
   // itself once the verb has been judged well formed here.
