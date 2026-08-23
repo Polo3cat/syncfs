@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -23,6 +24,21 @@ auto to_ticks(std::filesystem::file_time_type t) -> std::int64_t;
 auto from_ticks(std::string_view s) -> std::chrono::system_clock::time_point;
 auto to_file_time(std::chrono::system_clock::time_point t)
     -> std::filesystem::file_time_type;
+
+// Whether <listen address> is one this daemon may run with, and why not when
+// it is not.
+//
+// The argument is this node's identity on the control plane as much as it is
+// what the publisher binds: state carries it (I) and the digest subscription is
+// built from the same string (V58). Two nodes spelling it the same way each
+// read the other's state as their own, draw no partner and never send a digest,
+// so the whole repair plane is gone while create and remove keep working - in
+// no log line and with no crash (V64). Uniqueness itself cannot be checked from
+// here, since a node knows nothing of its peers' arguments, but an address
+// naming no one host guarantees the collision on every node at once and is
+// refused.
+auto check_listen_address(std::string_view addr)
+    -> std::expected<void, std::string>;
 
 // Where a message is addressed, and nothing else that happens to be text. An
 // address and a payload are both a string_view, and a digest addressed at its

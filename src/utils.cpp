@@ -1,10 +1,13 @@
 #include "utils.h"
 
+#include <algorithm>
 #include <boost/algorithm/string/split.hpp>
 #include <charconv>
 #include <chrono>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
+#include <format>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -20,6 +23,43 @@ auto utils::parse_host_port(const std::string &s)
     throw std::invalid_argument(s);
   }
   return {tokens.at(0), std::stoi(tokens.at(1))};
+}
+
+namespace {
+// Everything before the last colon with any brackets taken off, which is the
+// host even when it is an IPv6 literal carrying colons of its own.
+auto host_of(std::string_view addr) -> std::string_view {
+  const auto colon = addr.rfind(':');
+  auto host = colon == std::string_view::npos ? addr : addr.substr(0, colon);
+  if (host.starts_with('[')) {
+    host.remove_prefix(1);
+  }
+  if (host.ends_with(']')) {
+    host.remove_suffix(1);
+  }
+  return host;
+}
+} // namespace
+
+auto utils::check_listen_address(std::string_view addr)
+    -> std::expected<void, std::string> {
+  const auto host = host_of(addr);
+  // Zeros, dots and colons and nothing else is every spelling of the
+  // unspecified address there is - 0.0.0.0, ::, 0:0:0:0:0:0:0:0, and the empty
+  // host - and no host that names one machine can be written without a letter
+  // or a digit that is not zero. The ZMQ wildcard is its own spelling of the
+  // same thing.
+  const auto anywhere =
+      host == "*" || std::ranges::all_of(host, [](char c) -> bool {
+        return c == '0' || c == '.' || c == ':';
+      });
+  if (anywhere) {
+    return std::unexpected{std::format(
+        "\"{}\" names no one host, and this address is what peers address "
+        "their digests to as well as what the publisher binds",
+        host)};
+  }
+  return {};
 }
 
 auto utils::to_ticks(std::chrono::system_clock::time_point t) -> std::int64_t {

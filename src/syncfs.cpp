@@ -689,6 +689,19 @@ auto main(int argc, char *argv[]) -> int try {
     return EXIT_FAILURE;
   }
 
+  // The listen address is this node's identity on the control plane and not
+  // only what it binds: a peer addresses its digest at the endpoint this node
+  // publishes in its own state, and the subscription that receives it is built
+  // from the same string. Two nodes spelling it the same way each read the
+  // other's state as their own, draw no partner and never send a digest, so the
+  // repair plane is gone while create and remove keep working, saying so in no
+  // log line at all (V64). An address naming no one host guarantees that on
+  // every node at once, and it binds perfectly happily.
+  if (const auto unusable = utils::check_listen_address(args[2]); !unusable) {
+    spdlog::critical("Unusable listen address: {}", unusable.error());
+    return EXIT_FAILURE;
+  }
+
   zmq::context_t ctx;
 
   // Where this node publishes, which it needs before it subscribes to anything:

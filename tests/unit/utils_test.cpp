@@ -28,6 +28,26 @@ TEST(Utils, MissingColonThrows) {
   ASSERT_THROW(utils::parse_host_port("1.1.1.1 1234"), std::out_of_range);
 }
 
+TEST(Utils, V64AnAddressNamingNoOneHostIsRefused) {
+  // Every spelling of "whatever address is here", the ZMQ wildcard among them.
+  // Two nodes given one of these publish the same endpoint in their state, so
+  // each reads the other's as its own and neither ever draws a partner: no
+  // digest, no repair, and nothing said about it anywhere.
+  for (const auto *addr : {"0.0.0.0:5555", "*:5555", "::5555", "[::]:5555",
+                           ":5555", "0:0:0:0:0:0:0:0:5555"}) {
+    const auto checked = utils::check_listen_address(addr);
+    ASSERT_FALSE(checked.has_value()) << addr;
+    ASSERT_FALSE(checked.error().empty()) << addr;
+  }
+}
+
+TEST(Utils, V64AnAddressNamingOneHostIsTaken) {
+  for (const auto *addr : {"127.0.0.1:5555", "localhost:5555", "hostA:5555",
+                           "10.0.0.5:5555", "[::1]:5555"}) {
+    ASSERT_TRUE(utils::check_listen_address(addr).has_value()) << addr;
+  }
+}
+
 TEST(Utils, TicksRoundTripThroughTheWireForm) {
   const auto now = std::chrono::system_clock::now();
   ASSERT_EQ(utils::from_ticks(std::to_string(utils::to_ticks(now))), now);
