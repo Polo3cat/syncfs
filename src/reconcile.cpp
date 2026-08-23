@@ -181,13 +181,20 @@ auto gaps(const files::file_map_t &mine, const tombstone_map_t &tombstones,
   return found;
 }
 
+void forget_silent(state_map_t &peers,
+                   std::chrono::steady_clock::time_point now) {
+  std::erase_if(peers, [now](const auto &peer) -> bool {
+    return now - peer.second.at > peer_silence;
+  });
+}
+
 Partner::Partner() : generator{std::random_device{}()} {}
 
 auto Partner::pick(const state_map_t &peers, std::string_view mine)
     -> std::optional<std::string> {
   std::vector<const std::string *> candidates;
-  for (const auto &[endpoint, hashes] : peers) {
-    if (hashes != mine) {
+  for (const auto &[endpoint, heard] : peers) {
+    if (heard.hashes != mine) {
       candidates.push_back(&endpoint);
     }
   }

@@ -416,7 +416,9 @@ void reconcile_message(std::string_view verb,
     // comes back to it, and a tree that moved in between would leave it drawing
     // itself as the peer to ask.
     if (sender != own_endpoint) {
-      rounds.peers.insert_or_assign(sender, v.at(1).to_string());
+      rounds.peers.insert_or_assign(
+          sender, reconcile::heard_t{.hashes = v.at(1).to_string(),
+                                     .at = std::chrono::steady_clock::now()});
     }
     return;
   }
@@ -646,6 +648,11 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
       // out and whether anybody is worth asking.
       const auto mine = reconcile::hash(former, tombstones);
       server.state(mine);
+      // A peer that has stopped saying where it stands is out of the draw
+      // before it is made: its hash will never match again, so it would be
+      // asked one round in k for ever, and a digest addressed at a node that
+      // has gone is answered by nobody.
+      reconcile::forget_silent(rounds.peers, now);
       // One peer, drawn from those whose last root hash differed. A gap that
       // survives the round turns up again next round and draws somebody else,
       // so a wedged peer costs a round and nothing has to detect it.

@@ -201,9 +201,11 @@ TEST(Reconcile, V43GapsAreTheHoldersToRepair) {
 
 TEST(Reconcile, V59PartnerIsOneMismatchingPeer) {
   const auto mine = std::string{"my own root hash"};
-  const auto peers = reconcile::state_map_t{{"tcp://a:5555", "another hash"},
-                                            {"tcp://b:5555", "another hash"},
-                                            {"tcp://c:5555", mine}};
+  const auto heard = std::chrono::steady_clock::now();
+  const auto peers = reconcile::state_map_t{
+      {"tcp://a:5555", {.hashes = "another hash", .at = heard}},
+      {"tcp://b:5555", {.hashes = "another hash", .at = heard}},
+      {"tcp://c:5555", {.hashes = mine, .at = heard}}};
   auto partner = reconcile::Partner{};
 
   // One peer is asked, never the whole set, and never a peer that already
@@ -224,14 +226,47 @@ TEST(Reconcile, V59PartnerIsOneMismatchingPeer) {
 
 TEST(Reconcile, V59NoPartnerWhenEveryPeerAgrees) {
   const auto mine = std::string{"my own root hash"};
+  const auto heard = std::chrono::steady_clock::now();
   const auto peers =
-      reconcile::state_map_t{{"tcp://a:5555", mine}, {"tcp://b:5555", mine}};
+      reconcile::state_map_t{{"tcp://a:5555", {.hashes = mine, .at = heard}},
+                             {"tcp://b:5555", {.hashes = mine, .at = heard}}};
   auto partner = reconcile::Partner{};
 
   // A converged swarm sends nothing but its root hash, which is the whole of
   // what makes the idle cost thirty two bytes a node a period.
   ASSERT_FALSE(partner.pick(peers, mine).has_value());
   ASSERT_FALSE(partner.pick({}, mine).has_value());
+}
+
+TEST(Reconcile, V67AStalePeerStopsBeingACandidate) {
+  const auto mine = std::string{"my own root hash"};
+  const auto now = std::chrono::steady_clock::now();
+  auto peers = reconcile::state_map_t{
+      // One peer that said where it stands a moment ago, and one that has said
+      // nothing for longer than three ceilings. Both differ from this node, so
+      // before the expiry both were drawn and one round in two went to a
+      // digest nobody was left to answer.
+      {"tcp://here:5555", {.hashes = "another hash", .at = now}},
+      {"tcp://gone:5555",
+       {.hashes = "a hash from before",
+        .at = now - reconcile::peer_silence - std::chrono::seconds{1}}}};
+  auto partner = reconcile::Partner{};
+
+  reconcile::forget_silent(peers, now);
+
+  ASSERT_EQ(peers.size(), 1);
+  for (int round = 0; round < 50; ++round) {
+    const auto asked = partner.pick(peers, mine);
+    ASSERT_TRUE(asked.has_value());
+    ASSERT_EQ(*asked, "tcp://here:5555");
+  }
+
+  // The one still speaking goes the same way once it stops, and a node with
+  // nobody left to ask asks nobody rather than asking the last thing it heard.
+  reconcile::forget_silent(peers, now + reconcile::peer_silence +
+                                      std::chrono::seconds{1});
+  ASSERT_TRUE(peers.empty());
+  ASSERT_FALSE(partner.pick(peers, mine).has_value());
 }
 
 TEST(Reconcile, V59RepairsArePacedWithoutARandomDraw) {

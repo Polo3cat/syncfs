@@ -96,10 +96,32 @@ auto gaps(const files::file_map_t &mine, const tombstone_map_t &tombstones,
 using pending_map_t =
     std::map<std::filesystem::path, std::chrono::steady_clock::time_point>;
 
+// What a peer last said its tree hashes to, and the moment it said so. The
+// moment rides in the record rather than in a map of its own, for the reason
+// V37 keeps one tombstone map: two maps are two chances to disagree about the
+// same peer.
+struct heard_t {
+  std::string hashes;
+  std::chrono::steady_clock::time_point at;
+};
+
 // What this node last heard each of its peers' trees hash to, by the endpoint
 // the peer named in its state. One entry a peer, so a root hash that differs
 // can be answered without waiting to hear it again.
-using state_map_t = std::map<std::string, std::string>;
+using state_map_t = std::map<std::string, heard_t>;
+
+// How long a peer may say nothing before this node stops asking it anything. A
+// live peer publishes its root hash at least once a ceiling even while it is
+// being written to (V47), so three of them is slack rather than a tuned number.
+inline constexpr auto peer_silence = state_ceiling * 3;
+
+// Drops the peers that have not said where they stand within that. Without it a
+// peer that has gone keeps a hash that will never match again and stays in the
+// draw for ever, so one round in k is spent addressing a digest nothing will
+// answer: V59's "a wedged peer costs one round" holds for a wedged peer and not
+// for a departed one (V67).
+void forget_silent(state_map_t &peers,
+                   std::chrono::steady_clock::time_point now);
 
 // Which peer to ask this round: uniformly at random among those whose last root
 // hash differed from this node's own, and nothing at all when they all agree,
