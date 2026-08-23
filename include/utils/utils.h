@@ -37,6 +37,12 @@ auto to_file_time(std::chrono::system_clock::time_point t)
 // here, since a node knows nothing of its peers' arguments, but an address
 // naming no one host guarantees the collision on every node at once and is
 // refused.
+//
+// The port is read here too, and its ceiling is 63535 rather than 65535:
+// parse_host_port answers in an int that the sync loop narrows to an unsigned
+// short, so 70000 became 4464 before ZMQ ever saw it, and libtorrent listens
+// two thousand above this port (V12) where the sum wrapped just as silently
+// (V68).
 auto check_listen_address(std::string_view addr)
     -> std::expected<void, std::string>;
 

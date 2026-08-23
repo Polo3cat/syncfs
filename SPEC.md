@@ -270,7 +270,7 @@ T60|x|reject a wildcard \| non-unique `<listen address>` @ startup, & say which.
 T61|.|stamp the origin mtime @ apply when the create adds ⊥ transfer (info hash already in session, §R.5) & spend the `inbound.origins` entry there. Keep the `cache_flushed_alert` path for ∀ real transfer (§V.44, §V.63 ordering unchanged)|V65,V44,V36,V63,R5
 T62|x|`files::list()` → `error_code` overload of `recursive_directory_iterator`, per-entry errors skipped, ⊥ throw out of the sync loop. Check the `is_regular_file`/`is_symlink` calls on the copied entries too (`src/files.cpp:41-43`) — they ? throw when a cached status ⊥ available|V66,V11,V28
 T63|.|thread the peer list into `sync_loop` & drop ∀ `state` from a sender ∉ it. Bound & expire `rounds.peers` off the same set|V67,V58,V56
-T64|.|reject a port > 63535 \| a non-numeric port @ startup; ⊥ narrow `int` → `unsigned short` silently|V68,V12,V9
+T64|x|reject a port > 63535 \| a non-numeric port @ startup; ⊥ narrow `int` → `unsigned short` silently|V68,V12,V9
 T65|.|citation sweep: `src/syncfs.cpp` refs drifted ~50 lines across §I & §V — §I usage `:588` (actual 657), §V.2 `:667-676` (682-690), §V.42 `:442`/`:565-566` (495/634-635), §V.43 & §I net `:394` (447), §V.55 `:249-278` (302-331), §V.59 `:403` (456), §V.62 `:158-170` (191-201). Evidence-by-line is this spec's currency ∴ `/check` re-finds these every run|-
 
 ## §B BUGS

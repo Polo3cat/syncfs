@@ -48,6 +48,26 @@ TEST(Utils, V64AnAddressNamingOneHostIsTaken) {
   }
 }
 
+TEST(Utils, V68APortOutOfRangeIsRefused) {
+  // 70000 used to become 4464 on the way through an unsigned short, and
+  // anything above 63535 wrapped again when libtorrent took its two thousand
+  // more (V12): two nodes silently sharing one data plane port.
+  for (const auto *addr :
+       {"127.0.0.1:70000", "127.0.0.1:65000", "127.0.0.1:63536", "127.0.0.1:0",
+        "127.0.0.1:-1", "127.0.0.1:", "127.0.0.1", "127.0.0.1:55d5"}) {
+    const auto checked = utils::check_listen_address(addr);
+    ASSERT_FALSE(checked.has_value()) << addr;
+    ASSERT_FALSE(checked.error().empty()) << addr;
+  }
+}
+
+TEST(Utils, V68APortInsideTheRangeIsTaken) {
+  for (const auto *addr :
+       {"127.0.0.1:1", "127.0.0.1:5555", "127.0.0.1:63535"}) {
+    ASSERT_TRUE(utils::check_listen_address(addr).has_value()) << addr;
+  }
+}
+
 TEST(Utils, TicksRoundTripThroughTheWireForm) {
   const auto now = std::chrono::system_clock::now();
   ASSERT_EQ(utils::from_ticks(std::to_string(utils::to_ticks(now))), now);

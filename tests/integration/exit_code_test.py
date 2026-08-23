@@ -67,6 +67,22 @@ def test_v64_wildcard_listen_address_exits_failure(wildcard, peers, tmp_dir):
     assert "listen address" in finished.stdout, finished.stdout
 
 
+@pytest.mark.parametrize(
+    "addr", ["127.0.0.1:70000", "127.0.0.1:65000", "127.0.0.1:0", "127.0.0.1"]
+)
+def test_v68_port_out_of_range_exits_failure(addr, peers, tmp_dir):
+    """V68: parse_host_port answers in an int and the sync loop narrows it to an
+    unsigned short, so 70000 arrived as 4464 with nothing said about it. And the
+    ceiling is 63535 rather than 65535, because libtorrent listens two thousand
+    above this port (V12) and that sum wrapped just as quietly, putting the data
+    plane of two nodes on one port.
+    """
+    finished = run_until_it_exits(addr, peers, tmp_dir)
+
+    assert finished.returncode == 1, finished.stdout + finished.stderr
+    assert "listen address" in finished.stdout, finished.stdout
+
+
 def test_v28_fatal_zmq_error_exits_failure(occupied_port, peers, tmp_dir):
     """A fatal zmq::error_t must leave main with EXIT_FAILURE.
 

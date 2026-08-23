@@ -736,7 +736,11 @@ auto main(int argc, char *argv[]) -> int try {
 
   auto [host, port] = utils::parse_host_port(args[2]);
 
-  sync_loop(std::move(client), std::move(listener), std::move(host), port);
+  // Narrowed on purpose and only because the check above has already put the
+  // port inside a range that survives it, libtorrent's two thousand more
+  // included (V68).
+  sync_loop(std::move(client), std::move(listener), std::move(host),
+            static_cast<unsigned short>(port));
 
   return EXIT_SUCCESS;
 } catch (zmq::error_t &e) {

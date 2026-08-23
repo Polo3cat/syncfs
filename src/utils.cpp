@@ -8,6 +8,7 @@
 #include <expected>
 #include <filesystem>
 #include <format>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -39,6 +40,16 @@ auto host_of(std::string_view addr) -> std::string_view {
   }
   return host;
 }
+
+// Whatever stands after the last colon, which is where a port is written even
+// when the host before it holds colons of its own.
+auto port_of(std::string_view addr) -> std::optional<std::string_view> {
+  const auto colon = addr.rfind(':');
+  if (colon == std::string_view::npos) {
+    return std::nullopt;
+  }
+  return addr.substr(colon + 1);
+}
 } // namespace
 
 auto utils::check_listen_address(std::string_view addr)
@@ -58,6 +69,29 @@ auto utils::check_listen_address(std::string_view addr)
         "\"{}\" names no one host, and this address is what peers address "
         "their digests to as well as what the publisher binds",
         host)};
+  }
+  // The port is read here rather than left to parse_host_port, which answers in
+  // an int that the sync loop then narrows to an unsigned short: 70000 became
+  // 4464 before ZMQ ever saw it. And the ceiling is 63535 rather than 65535,
+  // because libtorrent listens two thousand above this one (V12) and the sum
+  // wrapped just as silently, putting the data plane of two nodes on one port.
+  const auto port = port_of(addr);
+  if (!port.has_value() || port->empty()) {
+    return std::unexpected{std::format("\"{}\" carries no port", addr)};
+  }
+  int number = 0;
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  const auto *const end = port->data() + port->size();
+  // NOLINTNEXTLINE(bugprone-suspicious-stringview-data-usage)
+  const auto parsed = std::from_chars(port->data(), end, number);
+  if (parsed.ec != std::errc{} || parsed.ptr != end) {
+    return std::unexpected{std::format("\"{}\" is not a port number", *port)};
+  }
+  const int highest = 65535 - 2000;
+  if (number < 1 || number > highest) {
+    return std::unexpected{std::format(
+        "port {} is outside 1-{}, and libtorrent listens 2000 above it", number,
+        highest)};
   }
   return {};
 }
