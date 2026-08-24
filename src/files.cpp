@@ -24,7 +24,7 @@ auto last_write_time(const std::filesystem::directory_entry &entry)
 } // namespace
 
 auto list() -> files::file_map_t {
-  // It's necessary to materliaze die to std::view::filter caching
+  // It's necessary to materialize due to std::view::filter caching
   // the begin iterator. This causes a toctou failure on the value
   // returned by last_write_time. It doesn't check that the value
   // pointed to by the begin iterator is true with the predicate
