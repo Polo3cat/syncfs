@@ -142,7 +142,15 @@ auto adoptable(const tombstone_map_t &theirs, const files::file_map_t &held,
                const tombstone_map_t &mine, time_point now) -> tombstone_map_t {
   tombstone_map_t adopt;
   for (const auto &[path, at] : theirs) {
-    if (mine.contains(path)) {
+    // Later than what is held here, not merely absent from it. Two nodes that
+    // deleted the same path on their own hold two moments for it, and the
+    // `remove` that would have reconciled them is the one that went missing;
+    // asking only whether the path is known here leaves the older of the two
+    // standing, and the moment is in the hash, so the pair says it disagrees
+    // every round until both records expire. A tie and an older moment are
+    // both nothing to take on, which is what mark's max says too.
+    const auto ours = mine.find(path);
+    if (ours != mine.end() && ours->second >= at) {
       continue;
     }
     // Already past its time here. Taking it on would only hand it straight

@@ -73,11 +73,16 @@ auto hash(const files::file_map_t &held, const tombstone_map_t &deleted)
 auto decode_held(std::string_view form) -> files::file_map_t;
 auto decode_tombstones(std::string_view form) -> tombstone_map_t;
 
-// The deletions in a peer's digest this node has not got. A node that never
-// saw a remove would otherwise mismatch the root hash for ever and ship a
-// full digest every round, and a node coming back with the file would bring
-// it back to everyone. Already defeated by this node's own copy, or already
-// past the time to live here, means not worth adopting.
+// The deletions in a peer's digest that are news here: the ones this node has
+// no record of, and the ones it remembers happening earlier than the peer
+// does. A node that never saw a remove would otherwise mismatch the root hash
+// for ever and ship a full digest every round, and a node coming back with the
+// file would bring it back to everyone. Later rather than merely absent
+// because the moment is hashed too, so two nodes that deleted the same path on
+// their own disagree until the older record is brought up: mark keeps the
+// later of two deletions and this is the same rule read off a digest, for the
+// remove that never arrived. Already defeated by this node's own copy, or
+// already past the time to live here, means not worth adopting.
 auto adoptable(const tombstone_map_t &theirs, const files::file_map_t &held,
                const tombstone_map_t &mine, time_point now) -> tombstone_map_t;
 

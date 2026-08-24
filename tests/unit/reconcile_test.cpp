@@ -177,6 +177,56 @@ TEST(Reconcile, V50AbsentUndefeatedTombstonesAreAdopted) {
   ASSERT_FALSE(adopt.contains("./ancient"));
 }
 
+TEST(Reconcile, V69AHeldTombstoneIsCaughtUpToALaterOne) {
+  // Two nodes deleted the same path on their own a moment apart, and the
+  // `remove` carrying the later of the two moments was one of the ones the
+  // control plane dropped. The digest is the only thing left that can settle
+  // it, and a record already held here is what it has to settle against.
+  const auto now = std::chrono::system_clock::now();
+  const auto mine_at = now - std::chrono::seconds{10};
+  const auto theirs_at = mine_at + std::chrono::milliseconds{300};
+  const std::filesystem::path path{"./f"};
+
+  auto mine = reconcile::tombstone_map_t{};
+  mine.emplace(path, mine_at);
+  auto theirs = reconcile::tombstone_map_t{};
+  theirs.emplace(path, theirs_at);
+  const auto held = files::file_map_t{};
+
+  // The moment is in the hash, so while the two records differ the pair goes
+  // on saying it differs every round and each ships a full digest to say it.
+  ASSERT_NE(reconcile::hash(held, mine), reconcile::hash(held, theirs));
+
+  const auto adopt = reconcile::adoptable(theirs, held, mine, now);
+  ASSERT_EQ(adopt.at(path), theirs_at);
+  // Which is the answer the lost `remove` would have given, since mark keeps
+  // the later of the two. Adoption is that rule reached through the digest
+  // rather than through a message that may never arrive.
+  auto caught_up = mine;
+  for (const auto &[at_path, at] : adopt) {
+    reconcile::mark(caught_up, at_path, at);
+  }
+  ASSERT_EQ(reconcile::hash(held, caught_up), reconcile::hash(held, theirs));
+
+  // A tie settles nothing, and neither does an older record: mark's max does
+  // nothing for either, and taking one on would only hand it back next round.
+  ASSERT_TRUE(reconcile::adoptable(mine, held, mine, now).empty());
+  auto older = reconcile::tombstone_map_t{};
+  older.emplace(path, mine_at - std::chrono::seconds{1});
+  ASSERT_TRUE(reconcile::adoptable(older, held, mine, now).empty());
+
+  // And later is not enough on its own. A deletion this node would expire at
+  // once is still declined, whether or not it has a record of its own to
+  // compare against.
+  auto ancient = reconcile::tombstone_map_t{};
+  ancient.emplace(path,
+                  now - reconcile::tombstone_ttl - std::chrono::seconds{1});
+  auto older_still = reconcile::tombstone_map_t{};
+  older_still.emplace(path,
+                      now - reconcile::tombstone_ttl - std::chrono::seconds{2});
+  ASSERT_TRUE(reconcile::adoptable(ancient, held, older_still, now).empty());
+}
+
 TEST(Reconcile, V43GapsAreTheHoldersToRepair) {
   auto mine = files::file_map_t{};
   mine.emplace("./only_here", written_at(utils::from_ticks("5")));
