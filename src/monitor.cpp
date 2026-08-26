@@ -165,14 +165,15 @@ constexpr size_t batch_size = 16;
 auto _read(int fd) -> std::expected<std::vector<RawEvent>, std::string> {
   alignas(inotify_event) std::array<char, batch_size * max_event_size> buf{};
   auto const n = ::read(fd, buf.data(), buf.size());
-  if (n == -1) {
+  if (n < 0) {
     return std::unexpected(
         std::format("Failed to read on inotify fd. {}", ::strerror(errno)));
   }
   if (n == 0) {
     return std::unexpected("inotify fd closed");
   }
-  if (std::cmp_less(n, sizeof(inotify_event))) {
+  // Invariant: n > 0
+  if (static_cast<size_t>(n) < sizeof(inotify_event)) {
     return std::unexpected("Read something smaller than an inotify event");
   }
 

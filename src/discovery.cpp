@@ -12,8 +12,6 @@
 namespace discovery {
 auto parse(const std::filesystem::path &peers_file)
     -> std::expected<std::vector<std::string>, std::string> {
-  // Read-only: an fstream defaults to in|out and fails to open a peers file
-  // that is not writable, leaving the peer list silently empty (V32, B5).
   std::ifstream file{peers_file};
   if (!file.is_open()) {
     return std::unexpected{
