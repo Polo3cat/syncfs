@@ -1,0 +1,75 @@
+
+2 nodes, 20 writes of 1024 B
+  write   0:   0.054 s
+  write   1:   0.100 s
+  write   2:  60.069 s   <-- past V19
+  write   3:   0.100 s
+  write   4:   0.100 s
+  write   5:  59.801 s   <-- past V19
+  write   6:   0.100 s
+  write   7:   0.100 s
+  write   8:   0.100 s
+  write   9:   0.100 s
+  write  10:   0.100 s
+  write  11:  59.617 s   <-- past V19
+  write  12:   0.050 s
+  write  13:   0.100 s
+  write  14:   0.100 s
+  write  15:   0.100 s
+  write  16:   0.100 s
+  write  17:   0.100 s
+  write  18:   0.100 s
+  write  19:   0.100 s
+  3/20 past V19's 5.0 s deadline
+  fast writes: median 0.100 s
+  slow writes: median 59.801 s
+
+4 nodes, 20 writes of 1024 B
+  write   0:   0.104 s
+  write   1:   0.100 s
+  write   2:   0.100 s
+  write   3:   2.104 s
+  write   4:   0.100 s
+  write   5:  59.579 s   <-- past V19
+  write   6:   0.100 s
+  write   7:   0.100 s
+  write   8:   0.100 s
+  write   9:  59.712 s   <-- past V19
+  write  10:   0.100 s
+  write  11:  59.663 s   <-- past V19
+  write  12:   0.100 s
+  write  13:  59.925 s   <-- past V19
+  write  14:   2.111 s
+  write  15:  59.942 s   <-- past V19
+  write  16:   0.050 s
+  write  17:   0.100 s
+  write  18:   0.101 s
+  write  19:  59.776 s   <-- past V19
+  6/20 past V19's 5.0 s deadline
+  fast writes: median 0.100 s
+  slow writes: median 59.776 s
+
+10 nodes, 20 writes of 1024 B
+  write   0:  59.655 s   <-- past V19
+  write   1:   0.101 s
+  write   2:   0.101 s
+  write   3:   2.058 s
+  write   4:   0.151 s
+  write   5:   0.452 s
+  write   6:   1.858 s
+  write   7:   0.753 s
+  write   8:   0.050 s
+  write   9:   0.953 s
+  write  10:   0.904 s
+  write  11:   0.050 s
+  write  12:   0.953 s
+  write  13:   2.060 s
+  write  14:   0.905 s
+  write  15:   0.101 s
+  write  16:   0.100 s
+  write  17:   0.100 s
+  write  18:   1.054 s
+  write  19:   0.402 s
+  1/20 past V19's 5.0 s deadline
+  fast writes: median 0.452 s
+  slow writes: median 59.655 s

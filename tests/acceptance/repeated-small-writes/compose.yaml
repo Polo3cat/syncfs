@@ -1,0 +1,41 @@
+# Two-node syncfs mesh for §V.70.
+#
+#   ./test.sh
+#
+# Two is deliberate and not a shortcut: §B.19 measured the fault at every node
+# count tried (N=2 3/20, N=4 6/20, N=10 1/20), and two nodes is the smallest
+# mesh that can show it and the cheapest to run twenty times.
+#
+# Containers, not processes, and that is the whole reason this test is here
+# rather than in tests/integration: the integration suite runs bare `syncfs`
+# processes on 127.0.0.1, where §B.19 did not reproduce once in twenty five
+# writes. The nodes need distinct addresses -- the same regime §R.1 is about,
+# and the deployment README.md documents.
+
+x-node: &node
+  image: syncfs
+  userns_mode: "keep-id:uid=1000"
+  restart: unless-stopped
+  networks:
+    - mesh
+
+services:
+  hostA:
+    <<: *node
+    container_name: rsw-hostA
+    command: ["/peers", "hostA:5555"]
+    volumes:
+      - ./peers-A:/peers:ro,Z
+      - ./data-A:/data:rw,Z
+
+  hostB:
+    <<: *node
+    container_name: rsw-hostB
+    command: ["/peers", "hostB:5555"]
+    volumes:
+      - ./peers-B:/peers:ro,Z
+      - ./data-B:/data:rw,Z
+
+networks:
+  mesh:
+    driver: bridge
