@@ -1,0 +1,25 @@
+B19 / R34: the 60 s stall tracks libtorrent's min_reconnect_time 1:1.
+
+N=2 containers on a podman bridge, debug binary, sequential 1 KiB writes,
+arrival = size AND allocated blocks. Rate is unaffected by the setting; only
+the duration of a stalled write is. ~20% of writes take the retry path at
+every value, so the setting bounds the damage rather than removing the trigger.
+
+  min_reconnect_time   slow writes            worst     past V19 (5 s)
+  60 s (default)       59.6 - 60.3 s          60.3 s    8-9 of 30
+   5 s                  4.66 - 5.26 s          5.26 s    1 of 25
+   1 s (V70)            1.00 - 1.25 s          1.25 s    0 of 30
+
+Control that killed the earlier, wrong explanation:
+
+  state_ceiling 60 s -> 20 s, min_reconnect_time left at its default.
+  If the reconcile ceiling were the recovery path the stall would have become
+  20 s. It stayed at 60 s (60.16, 60.01, 60.02, 60.02, 60.01, 59.92, 59.93,
+  59.92, 59.98 over 15 writes), so the V56 repair landing 100 ms before the
+  file was two timers sharing a default, not cause and effect.
+
+Rate by node count at the 60 s default, 20 writes each (measure_tail.py):
+
+  N=2    3/20 past V19    slow median 59.8 s    fast median 0.100 s
+  N=4    6/20                        59.8 s                  0.100 s
+  N=10   1/20                        59.7 s                  0.452 s

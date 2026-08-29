@@ -549,6 +549,21 @@ void sync_loop(zmq::socket_t sender, zmq::socket_t receiver,
   // files are. Non-positive means as many as the file descriptor limit allows.
   settings.set_int(lt::settings_pack::connections_limit, unlimited);
 
+  // A peer that fails to connect once is not retried for min_reconnect_time
+  // seconds, multiplied by how many times it has failed, and the default is a
+  // full minute. That is a sensible way to treat a stranger on the internet who
+  // may simply be gone. Here the peer set is static, every peer is wanted, and
+  // the one peer holding a file is the only place that file can come from, so a
+  // single missed connection stopped one write in six for sixty seconds while
+  // the sender sat there seeding it (B19).
+  //
+  // One second, still multiplied by the failcount, so a peer that is genuinely
+  // gone is still backed off from at one, two, three seconds rather than
+  // hammered. Measured over thirty writes: every one inside V19's five seconds,
+  // worst 1.25 s, against 60 s before (R34).
+  const int reconnect_seconds = 1;
+  settings.set_int(lt::settings_pack::min_reconnect_time, reconnect_seconds);
+
   // No public DHT router. The default one is a host on the internet, and while
   // the list is not empty libtorrent will not start its DHT at all until that
   // name resolves, then keeps talking to a router it may never reach; the
