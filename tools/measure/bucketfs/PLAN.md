@@ -126,14 +126,39 @@ cells already present in the CSV and would have skipped exactly the poisoned
 ones. Start the matrix from an empty CSV against the rebuilt
 `localhost/syncfs` image.
 
-## What is left to run
+## What has been run (2026-08-30)
 
-Nothing has been measured yet on the fixed binary. All three experiments are
-outstanding.
+All three experiments are complete on the fixed binary, 220 samples over 54
+cells, in `.benchmarks/experiment-{a-small,a-gib,b,c-baseline}.csv`. The
+chapter is written from them by
+`tools/measure/bucketfs/tex_tables.py`, into
+`syncfs-doc/main/chapter-results/measurements.tex`; the prose around it is
+`chapter-results/results.tex`. Re-running the generator over the CSVs
+regenerates every number and every macro the prose quotes, so nothing in the
+chapter is transcribed by hand.
 
-Preconditions: on branch `backprop-v70-wedged-torrent`, `make run-image` has
-been run since commit `1c6f4c4` (the current `localhost/syncfs` already has the
-fix), no other containers running, host load average < 1.5.
+The image had to be rebuilt first: `localhost/syncfs` was seven minutes older
+than commit `1c6f4c4`, so the precondition below did not in fact hold.
+
+Headline findings:
+
+- **3.5, 3.13, 3.14 met.** 1 GiB reaches 10 nodes in 24.0 s against a 120 s
+  budget; 10 → 20 nodes costs ×1.42 at 1 GiB and ×1.90 at 4 GiB.
+- **syncfs is faster than BucketFS at every node count measured for one file**,
+  and the gap widens with size: 4 GiB at N=4 is 60.5 s against 119.0 s.
+- **BucketFS `tuned` is not distinguishable from `default`**, confirming
+  `SyncPeriod` is off the upload path. The arm was dropped after A1.
+- **3.12 is met for single files and not for many.** 0 of 156 propagation runs
+  failed; 10 of 39 many-file runs did.
+- **Experiment B is where syncfs loses.** BucketFS costs ~1 s per 4 KiB PUT,
+  serially, near-flat in N; syncfs sits at a ~300 s floor set by the repair
+  pacing and does not converge at 10 000 files within 900 s at N=4 and N=10.
+  The BucketFS 10 000-file cells were not run: at ~1 s per PUT one repeat is
+  most of three hours.
+
+Preconditions for a re-run: on branch `backprop-v70-wedged-torrent`,
+`make run-image` has been run since commit `1c6f4c4`, no other containers
+running, host load average < 1.5.
 
 ### A — propagation (headline: Scenarios 3.5, 3.12, 3.13, 3.14)
 

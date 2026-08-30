@@ -1,0 +1,483 @@
+#!/usr/bin/env python3
+"""Turn the matrix CSVs into the LaTeX tables the results chapter is built on.
+
+The tables are generated rather than typed so that a re-run of the matrix
+regenerates the chapter's numbers, and so that nothing is transcribed by hand
+between a CSV and a table. The statistic is the median with the observed
+minimum and maximum, never the mean: one outlier in five repeats moves a mean
+past every other sample and hides both the typical case and the outlier.
+
+    tex_tables.py --out syncfs-doc/main/chapter-results/measurements.tex \
+        .benchmarks/experiment-*.csv
+"""
+
+import argparse
+import csv
+import json
+import re
+import statistics
+import sys
+
+from pathlib import Path
+
+KIB = 1024
+MIB = 1024 * KIB
+GIB = 1024 * MIB
+
+SYSTEM_LABEL = {
+    "syncfs": "syncfs",
+    "bucketfs": "BucketFS",
+    "plainfile": "plain file",
+}
+
+
+def load(paths):
+    rows = []
+    for path in paths:
+        with open(path, newline="") as f:
+            rows.extend(csv.DictReader(f))
+    return rows
+
+
+def human(size: int) -> str:
+    for unit, scale in (("GiB", GIB), ("MiB", MIB), ("KiB", KIB)):
+        if size >= scale:
+            return f"{size / scale:g}\\,{unit}"
+    return f"{size}\\,B"
+
+
+def arm(row) -> str:
+    """How a system-and-configuration pair is named in a table column."""
+    system = SYSTEM_LABEL[row["system"]]
+    if row["system"] == "bucketfs":
+        return f"{system} ({row['config']})"
+    return system
+
+
+MISSING = "\\multicolumn{1}{c}{---}"
+
+
+def cell_values(group, metric):
+    return [float(r[metric]) for r in group if r[metric]]
+
+
+DAGGER_LEGEND = (
+    " A $\\dagger$ marks runs that did not converge inside the deadline, and "
+    "the count beside it says how many of the repeats those were; a time next "
+    "to one is the last arrival among the nodes that did receive the payload, "
+    "not a convergence time."
+)
+
+
+def deadline_for(experiment: str, size: int) -> float:
+    """The deadline run_matrix.py gave the cell, so a table can say what a
+    non-convergence means: not "never", but "not inside this many seconds"."""
+    if experiment == "A" and size >= GIB:
+        return 1800.0
+    return 900.0
+
+
+def digits_for(value: float) -> int:
+    """Decimals worth printing at this magnitude.
+
+    Three decimals on a two-hundred-second median is noise that costs a column
+    its width; three decimals on a fifty-millisecond one is the measurement.
+    """
+    if value >= 100:
+        return 0
+    if value >= 10:
+        return 1
+    if value >= 1:
+        return 2
+    return 3
+
+
+def fmt(group, metric, digits=None) -> str:
+    """Median with the range, or what happened instead of a number.
+
+    A cell that ran and did not converge reports its deadline as a lower bound
+    rather than an em dash, which would make it indistinguishable from a cell
+    that was never run.
+    """
+    values = cell_values(group, metric)
+    bad = sum(1 for r in group if r["converged"] != "True")
+    if not values:
+        deadline = deadline_for(group[0]["experiment"], int(group[0]["size_bytes"]))
+        return f"$>{deadline:.0f}$\\,$^{{{bad}\\dagger}}$"
+    median = statistics.median(values)
+    low, high = min(values), max(values)
+    places = digits_for(median) if digits is None else digits
+    body = f"{median:.{places}f}"
+    if bad:
+        body += f"\\,$^{{{bad}\\dagger}}$"
+    if high - low >= 10 ** -places:
+        # The range hangs under the median in a top-aligned nested tabular:
+        # side by side, eight of these are wider than the text block, and
+        # \shortstack would centre the pair off the row's own baseline.
+        body = (f"\\begin{{tabular}}[t]{{@{{}}r@{{}}}}{body}\\\\"
+                f"{{\\tiny {low:.{places}f}--{high:.{places}f}}}"
+                f"\\end{{tabular}}")
+    return body
+
+
+def group_by(rows, key):
+    out = {}
+    for row in rows:
+        out.setdefault(key(row), []).append(row)
+    return out
+
+
+def matrix_table(rows, metric, caption, label, out):
+    """One table: an arm and a payload size per row, a node count per column.
+
+    Node counts across the top rather than down the side, because the claim
+    under test is about what happens as nodes are added.
+    """
+    cells = group_by(rows, lambda r: (arm(r), int(r["size_bytes"]), int(r["nodes"])))
+    arms = sorted({a for a, _, _ in cells})
+    sizes = sorted({s for _, s, _ in cells})
+    node_counts = sorted({n for _, _, n in cells})
+
+    print("\\begin{table}[H]", file=out)
+    print("\\centering", file=out)
+    print("\\footnotesize", file=out)
+    print("\\setlength{\\tabcolsep}{4pt}", file=out)
+    print(f"\\begin{{tabular}}{{ll{'r' * len(node_counts)}}}", file=out)
+    print("\\hline", file=out)
+    header = " & ".join(f"$N{{=}}{n}$" for n in node_counts)
+    print(f"System & Size & {header} \\\\", file=out)
+    print("\\hline", file=out)
+    for a in arms:
+        for index, size in enumerate(sizes):
+            row = [a if index == 0 else "", human(size)]
+            for n in node_counts:
+                group = cells.get((a, size, n))
+                row.append(MISSING if group is None else fmt(group, metric))
+            print(" & ".join(row) + " \\\\", file=out)
+        print("\\hline", file=out)
+    print("\\end{tabular}", file=out)
+    if any(r["converged"] != "True" for r in rows):
+        caption += DAGGER_LEGEND
+    print(f"\\caption{{{caption}}}", file=out)
+    print(f"\\label{{{label}}}", file=out)
+    print("\\end{table}", file=out)
+    print("", file=out)
+
+
+def tree_table(rows, caption, label, out):
+    """Experiment B: an arm and a file count per row, a node count per column."""
+    cells = group_by(rows, lambda r: (arm(r), int(r["file_count"]), int(r["nodes"])))
+    arms = sorted({a for a, _, _ in cells})
+    counts = sorted({c for _, c, _ in cells})
+    node_counts = sorted({n for _, _, n in cells})
+
+    print("\\begin{table}[H]", file=out)
+    print("\\centering", file=out)
+    print("\\footnotesize", file=out)
+    print("\\setlength{\\tabcolsep}{4pt}", file=out)
+    print(f"\\begin{{tabular}}{{ll{'r' * len(node_counts)}}}", file=out)
+    print("\\hline", file=out)
+    header = " & ".join(f"$N{{=}}{n}$" for n in node_counts)
+    print(f"System & Files & {header} \\\\", file=out)
+    print("\\hline", file=out)
+    for a in arms:
+        for index, count in enumerate(counts):
+            row = [a if index == 0 else "", f"{count:,}".replace(",", "\\,")]
+            for n in node_counts:
+                group = cells.get((a, count, n))
+                row.append(MISSING if group is None else fmt(group, "propagation_s"))
+            print(" & ".join(row) + " \\\\", file=out)
+        print("\\hline", file=out)
+    print("\\end{tabular}", file=out)
+    if any(r["converged"] != "True" for r in rows):
+        caption += DAGGER_LEGEND
+    print(f"\\caption{{{caption}}}", file=out)
+    print(f"\\label{{{label}}}", file=out)
+    print("\\end{table}", file=out)
+    print("", file=out)
+
+
+def baseline_table(rows, out):
+    """Experiment C beside each system's writer-side ingest at $N=2$."""
+    plain = group_by([r for r in rows if r["experiment"] == "C"],
+                     lambda r: int(r["size_bytes"]))
+    ingest = group_by([r for r in rows if r["experiment"] == "A" and int(r["nodes"]) == 2],
+                      lambda r: (arm(r), int(r["size_bytes"])))
+    arms = sorted({a for a, _ in ingest})
+    sizes = sorted(set(plain) | {s for _, s in ingest})
+
+    print("\\begin{table}[H]", file=out)
+    print("\\centering", file=out)
+    print("\\footnotesize", file=out)
+    print(f"\\begin{{tabular}}{{l{'r' * (len(arms) + 1)}}}", file=out)
+    print("\\hline", file=out)
+    print(" & ".join(["Size", "plain file"] + arms) + " \\\\", file=out)
+    print("\\hline", file=out)
+    for size in sizes:
+        row = [human(size)]
+        group = plain.get(size)
+        row.append(MISSING if group is None else fmt(group, "ingest_s"))
+        for a in arms:
+            group = ingest.get((a, size))
+            row.append(MISSING if group is None else fmt(group, "ingest_s"))
+        print(" & ".join(row) + " \\\\", file=out)
+    print("\\hline", file=out)
+    print("\\end{tabular}", file=out)
+    print("\\caption{Writer-side ingest time in seconds, median with range: a "
+          "plain copy on the same filesystem against what each system's writer "
+          "waits for at $N=2$. A syncfs write returns once the bytes are on "
+          "local disk; a BucketFS PUT returns once every node has them. The "
+          "baseline column is the stricter measurement of the two: it waits "
+          "for an explicit flush to the device, where the other columns are "
+          "sampled by the same host-side probe as every other cell.}", file=out)
+    print("\\label{tab:results-ingest-baseline}", file=out)
+    print("\\end{table}", file=out)
+    print("", file=out)
+
+
+def scenario_table(rows, out):
+    """The requirements the matrix was run to answer, and what it answered.
+
+    Scenario 3.13 names 10 KiB, a size the ladder does not carry; the nearest
+    measured size stands in for it and the table says which one, because a
+    requirement answered with a different payload than it asks for is only
+    honest if the substitution is visible.
+    """
+    def group_of(system, nodes, size):
+        return [r for r in rows
+                if r["experiment"] == "A" and r["system"] == system
+                and int(r["nodes"]) == nodes and int(r["size_bytes"]) == size]
+
+    def median_of(system, nodes, size, metric="propagation_s"):
+        values = cell_values(group_of(system, nodes, size), metric)
+        return statistics.median(values) if values else None
+
+    def measured_sizes(nodes):
+        return sorted({int(r["size_bytes"]) for r in rows
+                       if r["experiment"] == "A" and r["system"] == "syncfs"
+                       and int(r["nodes"]) == nodes})
+
+    lines = []
+
+    at_ten = measured_sizes(10)
+    small = min(at_ten, key=lambda s: abs(s - 10 * KIB)) if at_ten else None
+    value = median_of("syncfs", 10, small) if small else None
+    lines.append((
+        "3.13", "$10$\\,KiB across $10$ nodes in $\\leq 5$\\,s",
+        f"{value:.2f}\\,s at {human(small)}" if value is not None else "---",
+        "met" if value is not None and value <= 5 else ("not met" if value is not None else "---"),
+    ))
+
+    gib = median_of("syncfs", 10, GIB)
+    lines.append((
+        "3.14", "$1$\\,GiB across $10$ nodes in $\\leq 120$\\,s",
+        f"{gib:.2f}\\,s" if gib is not None else "---",
+        "met" if gib is not None and gib <= 120 else ("not met" if gib is not None else "---"),
+    ))
+
+    both = [s for s in measured_sizes(10) if s in measured_sizes(20)]
+    largest = max(both) if both else None
+    ten = median_of("syncfs", 10, largest) if largest else None
+    twenty = median_of("syncfs", 20, largest) if largest else None
+    if ten and twenty:
+        ratio = twenty / ten
+        lines.append(("3.5", "$10 \\rightarrow 20$ nodes costs less than $2\\times$",
+                      f"$\\times{ratio:.2f}$ at {human(largest)}",
+                      "met" if ratio < 2 else "not met"))
+    else:
+        lines.append(("3.5", "$10 \\rightarrow 20$ nodes costs less than $2\\times$", "---", "---"))
+
+    single = [r for r in rows if r["experiment"] == "A"]
+    many = [r for r in rows if r["experiment"] == "B"]
+    bad_single = sum(1 for r in single if r["converged"] != "True")
+    bad_many = sum(1 for r in many if r["converged"] != "True")
+    lines.append(("3.12", "bounded convergence time",
+                  f"{bad_single} of {len(single)} single-file runs, "
+                  f"{bad_many} of {len(many)} many-file runs",
+                  "met" if bad_single == 0 and bad_many == 0 else "partly"))
+
+    print("\\begin{table}[H]", file=out)
+    print("\\centering", file=out)
+    print("\\footnotesize", file=out)
+    print("\\begin{tabular}{lp{5.0cm}p{3.6cm}l}", file=out)
+    print("\\hline", file=out)
+    print("Scenario & Requirement & Measured & Verdict \\\\", file=out)
+    print("\\hline", file=out)
+    for scenario, requirement, measured, verdict in lines:
+        print(f"{scenario} & {requirement} & {measured} & {verdict} \\\\", file=out)
+    print("\\hline", file=out)
+    print("\\end{tabular}", file=out)
+    print("\\caption{The requirements the matrix was run to answer, against "
+          "syncfs's measured medians.}", file=out)
+    print("\\label{tab:results-scenarios}", file=out)
+    print("\\end{table}", file=out)
+    print("", file=out)
+
+
+def environment_note(rows, out):
+    nofile = {r["nofile"] for r in rows if r["nofile"]}
+    loads = [float(r["loadavg"]) for r in rows if r["loadavg"]]
+    repeats = {}
+    for row in rows:
+        key = (row["experiment"], row["system"], row["config"], row["nodes"],
+               row["size_bytes"], row["file_count"])
+        repeats[key] = repeats.get(key, 0) + 1
+    print("% Generated by tools/measure/bucketfs/tex_tables.py -- do not edit by hand.", file=out)
+    print(f"% cells: {len(repeats)}, samples: {len(rows)}, "
+          f"repeats per cell: {sorted(set(repeats.values()))}", file=out)
+    if nofile:
+        print(f"% RLIMIT_NOFILE observed in the containers: {sorted(nofile)}", file=out)
+    if loads:
+        print(f"% host load average at t0: min {min(loads):.2f}, max {max(loads):.2f}", file=out)
+    print("", file=out)
+
+
+def nonconvergence_note(rows, out):
+    """Every cell that missed its deadline, one row per distinct outcome.
+
+    Repeats that failed the same way are counted rather than repeated: three
+    identical lines say no more than one line and a count, and the count is
+    what says whether the failure was systematic.
+    """
+    bad = [r for r in rows if r["converged"] != "True"]
+    if not bad:
+        return
+
+    tally = {}
+    for row in bad:
+        arrivals = json.loads(row["arrivals"] or "{}")
+        missing = [n for n, v in arrivals.items() if v is None]
+        # Node names end in a number, so a plain sort puts sfs10 before sfs2.
+        def node_key(name):
+            digits = re.findall(r"\d+", name)
+            return (re.sub(r"\d+", "", name), int(digits[-1]) if digits else 0)
+
+        detail = (", ".join(sorted(missing, key=node_key)) if missing
+                  else "arrived, hashes disagreed")
+        payload = (human(int(row["size_bytes"])) if row["file_count"] == "1"
+                   else f"{int(row['file_count']):,} files".replace(",", "\\,"))
+        key = (row["experiment"], SYSTEM_LABEL[row["system"]], row["config"],
+               int(row["nodes"]), payload,
+               deadline_for(row["experiment"], int(row["size_bytes"])), detail)
+        tally[key] = tally.get(key, 0) + 1
+
+    print("\\begin{table}[H]", file=out)
+    print("\\centering", file=out)
+    print("\\footnotesize", file=out)
+    print("\\setlength{\\tabcolsep}{4pt}", file=out)
+    print("\\begin{tabular}{lllrlrrp{2.6cm}}", file=out)
+    print("\\hline", file=out)
+    print("Experiment & System & Config & $N$ & Payload & Deadline & Runs & "
+          "Nodes that never received it \\\\", file=out)
+    print("\\hline", file=out)
+    for key in sorted(tally, key=lambda k: (k[0], k[1], k[3], k[4])):
+        experiment, system, config, nodes, payload, deadline, detail = key
+        print(f"{experiment} & {system} & {config} & {nodes} & {payload} & "
+              f"{deadline:.0f}\\,s & {tally[key]} & {detail} \\\\", file=out)
+    print("\\hline", file=out)
+    print("\\end{tabular}", file=out)
+    print("\\caption{Cells that did not converge inside their deadline, with "
+          "the number of repeats that failed the same way. A non-convergence "
+          "is a result and is recorded, not retried away.}", file=out)
+    print("\\label{tab:results-nonconvergence}", file=out)
+    print("\\end{table}", file=out)
+    print("", file=out)
+
+
+def macros(rows, out):
+    """Numbers the prose quotes, defined once from the data.
+
+    A sentence in the chapter that repeats a number from a table is a
+    transcription waiting to go stale; these are commands, so a re-run of the
+    matrix moves the prose with it.
+    """
+    def median_of(system, nodes, size, metric="propagation_s", experiment="A"):
+        group = [r for r in rows
+                 if r["experiment"] == experiment and r["system"] == system
+                 and int(r["nodes"]) == nodes and int(r["size_bytes"]) == size]
+        values = cell_values(group, metric)
+        return statistics.median(values) if values else None
+
+    defined = []
+
+    def define(name, value, digits=2):
+        if value is None:
+            return
+        print(f"\\newcommand{{\\{name}}}{{{value:.{digits}f}}}", file=out)
+        defined.append(name)
+
+    for label, nodes in (("Two", 2), ("Four", 4), ("Ten", 10), ("Twenty", 20)):
+        define(f"syncfsGib{label}", median_of("syncfs", nodes, GIB))
+        define(f"syncfsFourGib{label}", median_of("syncfs", nodes, 4 * GIB))
+        define(f"bucketfsGib{label}", median_of("bucketfs", nodes, GIB))
+        define(f"bucketfsFourGib{label}", median_of("bucketfs", nodes, 4 * GIB))
+        define(f"syncfsHundredMib{label}", median_of("syncfs", nodes, 100 * MIB))
+        define(f"bucketfsHundredMib{label}", median_of("bucketfs", nodes, 100 * MIB))
+
+    ten, twenty = median_of("syncfs", 10, GIB), median_of("syncfs", 20, GIB)
+    if ten and twenty:
+        define("syncfsGibScaling", twenty / ten)
+    ten, twenty = median_of("syncfs", 10, 4 * GIB), median_of("syncfs", 20, 4 * GIB)
+    if ten and twenty:
+        define("syncfsFourGibScaling", twenty / ten)
+
+    plain = median_of("plainfile", 0, GIB, metric="ingest_s", experiment="C")
+    define("plainGib", plain)
+    define("plainFourGib", median_of("plainfile", 0, 4 * GIB, metric="ingest_s", experiment="C"))
+    # Both at N=2, the node count the ingest table reports, so the prose and
+    # the table cannot drift apart.
+    define("syncfsGibIngest", median_of("syncfs", 2, GIB, metric="ingest_s"), digits=3)
+    define("bucketfsGibIngest", median_of("bucketfs", 2, GIB, metric="ingest_s"), digits=3)
+    print("", file=out)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("csv", nargs="+", type=Path)
+    parser.add_argument("--out", type=Path, default=None)
+    args = parser.parse_args()
+
+    rows = load(args.csv)
+    if not rows:
+        print("no rows", file=sys.stderr)
+        return 1
+
+    out = open(args.out, "w") if args.out else sys.stdout
+    try:
+        environment_note(rows, out)
+        macros(rows, out)
+        a_rows = [r for r in rows if r["experiment"] == "A"]
+        b_rows = [r for r in rows if r["experiment"] == "B"]
+        if a_rows:
+            matrix_table(
+                a_rows, "propagation_s",
+                "Propagation time in seconds, median with range: from the first "
+                "byte written to the last node holding the whole file. This is "
+                "the user-visible number.",
+                "tab:results-propagation", out)
+            matrix_table(
+                a_rows, "fanout_s",
+                "Fan-out time in seconds, median with range: from the writer "
+                "holding the file to the last node holding it. Replication "
+                "alone, and the only term that compares the two mechanisms "
+                "directly.",
+                "tab:results-fanout", out)
+        if b_rows:
+            tree_table(
+                b_rows,
+                "Propagation time in seconds for $4$\\,KiB files written at "
+                "once, median with range: the UDF-load case.",
+                "tab:results-manyfiles", out)
+        if any(r["experiment"] == "C" for r in rows):
+            baseline_table(rows, out)
+        if a_rows:
+            scenario_table(rows, out)
+        nonconvergence_note(rows, out)
+    finally:
+        if args.out:
+            out.close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
