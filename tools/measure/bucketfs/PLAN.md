@@ -131,11 +131,29 @@ ones. Start the matrix from an empty CSV against the rebuilt
 All three experiments are complete on the fixed binary, 220 samples over 54
 cells, in `.benchmarks/experiment-{a-small,a-gib,b,c-baseline}.csv`. The
 chapter is written from them by
-`tools/measure/bucketfs/tex_tables.py`, into
-`syncfs-doc/main/chapter-results/measurements.tex`; the prose around it is
-`chapter-results/results.tex`. Re-running the generator over the CSVs
-regenerates every number and every macro the prose quotes, so nothing in the
-chapter is transcribed by hand.
+`tools/measure/bucketfs/tex_tables.py`, into two files under
+`syncfs-doc/main/chapter-results/`: `measurements.tex` for the tables and
+`measurements-macros.tex` for the `\newcommand`s, which the chapter inputs at
+its top because prose in the method section quotes them before the tables are
+placed. The prose around them is `chapter-results/results.tex`. Re-running the
+generator over the CSVs regenerates every number and every macro the prose
+quotes, so nothing in the chapter is transcribed by hand:
+
+```sh
+python3 tools/measure/bucketfs/tex_tables.py \
+    --out ../../syncfs-doc/main/chapter-results/measurements.tex \
+    --macros ../../syncfs-doc/main/chapter-results/measurements-macros.tex \
+    .benchmarks/experiment-*.csv
+```
+
+190 of those samples are tabulated. The other 30 are BucketFS's tuned arm,
+which the generator drops (`DROPPED_ARM`) because its medians reproduce the
+default arm's: the synchronisation period is not on the upload path, so the
+tuned column repeated its neighbour. The arm survives as three macros --- the
+cells it shared with the default arm, how many of them matched, and the
+largest gap --- which is what the chapter's method section now says instead of
+showing a duplicate column. The dropped count is written into the header
+comment of the generated macros file.
 
 The image had to be rebuilt first: `localhost/syncfs` was seven minutes older
 than commit `1c6f4c4`, so the precondition below did not in fact hold.
