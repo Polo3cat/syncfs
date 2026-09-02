@@ -146,14 +146,14 @@ python3 tools/measure/bucketfs/tex_tables.py \
     .benchmarks/experiment-*.csv
 ```
 
-190 of those samples are tabulated. The other 30 are BucketFS's tuned arm,
-which the generator drops (`DROPPED_ARM`) because its medians reproduce the
-default arm's: the synchronisation period is not on the upload path, so the
-tuned column repeated its neighbour. The arm survives as three macros --- the
-cells it shared with the default arm, how many of them matched, and the
-largest gap --- which is what the chapter's method section now says instead of
-showing a duplicate column. The dropped count is written into the header
-comment of the generated macros file.
+190 of those samples are tabulated. The other 30 are BucketFS's tuned arm at a
+one-second synchronisation period, which the generator filters out
+(`DROPPED_ARM`) because it reproduced the default arm cell for cell: the
+period governs the directory-scan path and is not on the upload path. The
+chapter reports one configuration per system and says so in a sentence, so no
+table names a configuration and no macro describes the comparison. The rows
+stay in the CSVs, and their count is written into the header comment of the
+generated macros file.
 
 The image had to be rebuilt first: `localhost/syncfs` was seven minutes older
 than commit `1c6f4c4`, so the precondition below did not in fact hold.
