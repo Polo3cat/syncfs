@@ -154,7 +154,7 @@ def group_by(rows, key):
     return out
 
 
-def matrix_table(rows, metric, caption, label, out):
+def matrix_table(rows, metric, short, caption, label, out):
     """One table: an arm and a payload size per row, a node count per column.
 
     Node counts across the top rather than down the side, because the claim
@@ -185,13 +185,13 @@ def matrix_table(rows, metric, caption, label, out):
     print("\\end{tabular}", file=out)
     if any(r["converged"] != "True" for r in rows):
         caption += DAGGER_LEGEND
-    print(f"\\caption{{{caption}}}", file=out)
+    print(f"\\caption[{short}]{{{caption}}}", file=out)
     print(f"\\label{{{label}}}", file=out)
     print("\\end{table}", file=out)
     print("", file=out)
 
 
-def tree_table(rows, caption, label, out):
+def tree_table(rows, short, caption, label, out):
     """Experiment B: an arm and a file count per row, a node count per column."""
     cells = group_by(rows, lambda r: (arm(r), int(r["file_count"]), int(r["nodes"])))
     arms = sorted({a for a, _, _ in cells})
@@ -218,7 +218,7 @@ def tree_table(rows, caption, label, out):
     print("\\end{tabular}", file=out)
     if any(r["converged"] != "True" for r in rows):
         caption += DAGGER_LEGEND
-    print(f"\\caption{{{caption}}}", file=out)
+    print(f"\\caption[{short}]{{{caption}}}", file=out)
     print(f"\\label{{{label}}}", file=out)
     print("\\end{table}", file=out)
     print("", file=out)
@@ -250,7 +250,8 @@ def baseline_table(rows, out):
         print(" & ".join(row) + " \\\\", file=out)
     print("\\hline", file=out)
     print("\\end{tabular}", file=out)
-    print("\\caption{Writer-side ingest time in seconds, median with range: a "
+    print("\\caption[Writer-side ingest time against a plain file copy]"
+          "{Writer-side ingest time in seconds, median with range: a "
           "plain copy on the same filesystem against what each system's writer "
           "waits for at $N=2$. A syncfs write returns once the bytes are on "
           "local disk; a BucketFS PUT returns once every node has them. The "
@@ -337,7 +338,8 @@ def scenario_table(rows, out):
         print(f"{scenario} & {requirement} & {measured} & {verdict} \\\\", file=out)
     print("\\hline", file=out)
     print("\\end{tabular}", file=out)
-    print("\\caption{The requirements the matrix was run to answer, against "
+    print("\\caption[The requirements against the measured medians]"
+          "{The requirements the matrix was run to answer, against "
           "syncfs's measured medians.}", file=out)
     print("\\label{tab:results-scenarios}", file=out)
     print("\\end{table}", file=out)
@@ -409,7 +411,8 @@ def nonconvergence_note(rows, out):
               f"{deadline:.0f}\\,s & {tally[key]} & {detail} \\\\", file=out)
     print("\\hline", file=out)
     print("\\end{tabular}", file=out)
-    print("\\caption{Cells that did not converge inside their deadline, with "
+    print("\\caption[Cells that missed their deadline]"
+          "{Cells that did not converge inside their deadline, with "
           "the number of repeats that failed the same way. A non-convergence "
           "is a result and is recorded, not retried away.}", file=out)
     print("\\label{tab:results-nonconvergence}", file=out)
@@ -494,12 +497,14 @@ def main() -> int:
         if a_rows:
             matrix_table(
                 a_rows, "propagation_s",
+                "Propagation time by node count and file size",
                 "Propagation time in seconds, median with range: from the first "
                 "byte written to the last node holding the whole file. This is "
                 "the user-visible number.",
                 "tab:results-propagation", out)
             matrix_table(
                 a_rows, "fanout_s",
+                "Fan-out time by node count and file size",
                 "Fan-out time in seconds, median with range: from the writer "
                 "holding the file to the last node holding it. Replication "
                 "alone, and the only term that compares the two mechanisms "
@@ -508,6 +513,7 @@ def main() -> int:
         if b_rows:
             tree_table(
                 b_rows,
+                "Propagation time for many small files written at once",
                 "Propagation time in seconds for $4$\\,KiB files written at "
                 "once, median with range: the UDF-load case.",
                 "tab:results-manyfiles", out)
