@@ -45,7 +45,7 @@ Daemon keeps CWD identical across static peer set: inotify detects change → ZM
 - log: spdlog. `NDEBUG` → level `info`, pattern `[%Y-%m-%d %T] [%P] [%^%l%$] %v`. else level `debug`, `%T.%F`.
 - stats: torrent table `Name Progr Total Seeds Peers State` @ `debug`, every 2 s.
 - sig: `SIGTERM` & `SIGINT` → sync loop ends, `"Stopping."` @ `info`, `EXIT_SUCCESS` (V33).
-- test: ctest names `utils-unit`, `source-unit`, `monitor-unit`, `protocol-unit`, `files-unit`, `sink-unit`, `discovery-unit`, `syncfs-integration`, `syncfs-performance` — 7 unit suites, `files`/`discovery`/`sink` each own static lib ∴ linkable from a test (§T.9, §T.11, §T.12). `make {config,build,test,test-unit,test-integration,test-perfomance}` wrap them in podman (`test-perfomance` typo is the real target name).
+- test: ctest names `utils-unit`, `source-unit`, `monitor-unit`, `protocol-unit`, `files-unit`, `sink-unit`, `discovery-unit`, `syncfs-integration`, `syncfs-performance` — 7 unit suites, `files`/`discovery`/`sink` each own static lib ∴ linkable from a test (§T.9, §T.11, §T.12). `make {config,build,test,test-unit,test-integration,test-performance}` wrap them in podman.
 
 ## §R RESEARCH
 libtorrent 2.1.0 behaviour established by debugging §B.1. Paths relative to `.cpm-cache/libtorrent/ea35609a2e1eb282111b2588b7910f375b683f92`.
