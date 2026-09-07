@@ -3,6 +3,7 @@
 Keep a directory identical across a set of machines. No central server, no
 tracker, no cloud account — a static peer list and a daemon per node.
 
+[![CI](https://github.com/Polo3cat/syncfs/actions/workflows/ci.yml/badge.svg)](https://github.com/Polo3cat/syncfs/actions/workflows/ci.yml)
 ![C++23](https://img.shields.io/badge/C%2B%2B-23-blue)
 ![platform Linux](https://img.shields.io/badge/platform-Linux-lightgrey)
 ![license Unlicense](https://img.shields.io/badge/license-Unlicense-green)

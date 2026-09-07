@@ -1,0 +1,201 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# A superseded run has nothing left to say, and a cold build compiles Boost and
+# libtorrent from source: cancel it rather than pay for that twice.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # PODMAN_RUN bind-mounts this path into the toolchain image on every
+      # target, so it has to exist before the first one runs.
+      - name: Prepare the ccache directory
+        run: mkdir -p ~/.cache/ccache
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ github.sha }}
+          restore-keys: ccache-
+
+      # A debug configure fetches the pinned sources plus googletest, which the
+      # dist preset leaves out -- hence a key of its own.
+      - name: Cache dependency sources
+        uses: actions/cache@v4
+        with:
+          path: .cpm-cache
+          key: cpm-debug-${{ hashFiles('Dependencies.cmake', 'TestDependencies.cmake', 'cmake/CPM.cmake') }}
+
+      - name: Build the toolchain image
+        run: make build-image
+
+      # Before the format check, not for tidiness: `make files` writes its file
+      # list into .build, and the cmake preset is what creates that directory.
+      - name: Configure
+        run: make config
+
+      - name: Check formatting
+        run: make dry-format
+
+      # This also provisions the Python test dependencies: poetry-install is an
+      # ALL target, so cmake --build runs `poetry install` (TestDependencies.cmake:9).
+      - name: Build
+        run: make build
+
+      - name: Unit suites
+        run: make test-unit
+
+      - name: Integration suite
+        run: make test-integration
+
+      # Left off the pull request gate on purpose. The suite asserts on
+      # deadlines -- the one gigabyte case allows itself 120 seconds, and ctest
+      # caps the suite at 400 -- and a shared two-to-four core runner with
+      # neighbours measures the runner rather than the change. Run it from the
+      # Actions tab when a change is meant to move these numbers.
+      - name: Performance suite
+        if: github.event_name == 'workflow_dispatch'
+        run: make test-performance
+
+  image:
+    name: Runtime image
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Containerfile.run bind-mounts the source tree and Dependencies.cmake
+      # pins CPM_SOURCE_CACHE to <source>/.cpm-cache, so dependency sources land
+      # in the workspace and survive into the cache. This saves the download,
+      # not the compile: .build is deliberately left out, because a stale CMake
+      # cache fails in ways that read like a source error.
+      - name: Cache dependency sources
+        uses: actions/cache@v4
+        with:
+          path: .cpm-cache
+          key: cpm-dist-${{ hashFiles('Dependencies.cmake', 'cmake/CPM.cmake') }}
+
+      - name: Build the runtime image
+        run: make run-image
+
+      - name: Smoke test the image
+        run: |
+          # podman build exiting 0 only proves the layers assembled.
+
+          # The runtime stage installs the shared libraries by hand, so trimming
+          # that list breaks the image with a missing .so at startup and no build
+          # step notices. ldd exits 0 even when it prints "not found", so the
+          # grep is the assertion, not the ldd.
+          libs=$(podman run --rm --entrypoint ldd syncfs /usr/local/bin/syncfs)
+          echo "$libs"
+          if grep -q 'not found' <<<"$libs"; then
+            echo "::error::a shared library the binary needs is not in the image"
+            exit 1
+          fi
+
+          # No arguments is the one path that needs no peers and no network:
+          # usage on stdout, non-zero exit (SPEC.md I).
+          if podman run --rm syncfs; then
+            echo "::error::expected a non-zero exit when called with no arguments"
+            exit 1
+          fi
+          podman run --rm syncfs | head -1 | grep -q '^Usage: syncfs'
+
+      # Copied out of the image rather than executed here: it is built on Fedora
+      # 44 against that glibc and OpenSSL 3, and the runner is Ubuntu. Anything
+      # that wants to run it has to do so in a container.
+      - name: Package the binary
+        run: |
+          mkdir -p dist
+          id=$(podman create syncfs)
+          podman cp "$id":/usr/local/bin/syncfs dist/syncfs
+          podman rm "$id" > /dev/null
+          chmod +x dist/syncfs
+
+      # Only for a release. The image is an order of magnitude larger than the
+      # binary and every push would keep a copy of it.
+      - name: Package the image
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: podman save syncfs:latest | gzip > dist/syncfs-image.tar.gz
+
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+
+      - name: Upload the artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: syncfs-${{ github.sha }}
+          path: dist/
+          retention-days: 30
+          if-no-files-found: error
+
+  release:
+    name: Release
+    # Tags only, and only behind a green suite: a release is the one artifact
+    # somebody else runs.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [tests, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      # Full history: the notes below describe the tag against its predecessor.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: syncfs-${{ github.sha }}
+          path: dist
+
+      - name: Write the notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          previous=$(git describe --tags --abbrev=0 "${TAG}^" 2> /dev/null || true)
+          {
+            echo "Built from \`${GITHUB_SHA}\` on Fedora 44."
+            echo
+            echo "\`syncfs\` links libc, libstdc++ and OpenSSL 3 dynamically, so it runs"
+            echo "only on a host providing matching versions. \`syncfs-image.tar.gz\` carries"
+            echo "its own: \`podman load < syncfs-image.tar.gz\`."
+            echo
+            if [ -n "$previous" ]; then
+              echo "## Changes since ${previous}"
+              echo
+              git log --no-merges --format='- %s' "${previous}..${TAG}"
+            fi
+          } > notes.md
+          cat notes.md
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --title "syncfs $TAG" \
+            --notes-file notes.md \
+            dist/syncfs dist/syncfs-image.tar.gz dist/SHA256SUMS
