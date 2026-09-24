@@ -1,0 +1,118 @@
+# Ten-node syncfs mesh on one Podman network.
+#
+#   make run-image            # from the repository root, builds localhost/syncfs
+#   ./demo.sh                 # scripted walkthrough, or by hand:
+#   mkdir -p data/node{01..10} && podman compose up -d
+#
+# Service names (node01..node10) are the DNS names the peers/* files point at,
+# and each node publishes its own name as its listen address, so the address a
+# peer dials and the identity a node announces are the same string.
+#
+# Each node gets:
+#   /peers  read-only list of the other nine nodes
+#   /data   its own host directory, read-write: watch them converge from here
+#
+# keep-id maps the user owning ./data onto the image's syncfs user (uid 1000);
+# without it the daemon cannot write into /data.
+
+x-node: &node
+  image: localhost/syncfs
+  userns_mode: "keep-id:uid=1000"
+  restart: unless-stopped
+  networks:
+    - mesh
+
+services:
+  node01:
+    <<: *node
+    container_name: syncfs-node01
+    hostname: node01
+    command: ["/peers", "node01:5555"]
+    volumes:
+      - ./peers/node01:/peers:ro,Z
+      - ./data/node01:/data:rw,Z
+
+  node02:
+    <<: *node
+    container_name: syncfs-node02
+    hostname: node02
+    command: ["/peers", "node02:5555"]
+    volumes:
+      - ./peers/node02:/peers:ro,Z
+      - ./data/node02:/data:rw,Z
+
+  node03:
+    <<: *node
+    container_name: syncfs-node03
+    hostname: node03
+    command: ["/peers", "node03:5555"]
+    volumes:
+      - ./peers/node03:/peers:ro,Z
+      - ./data/node03:/data:rw,Z
+
+  node04:
+    <<: *node
+    container_name: syncfs-node04
+    hostname: node04
+    command: ["/peers", "node04:5555"]
+    volumes:
+      - ./peers/node04:/peers:ro,Z
+      - ./data/node04:/data:rw,Z
+
+  node05:
+    <<: *node
+    container_name: syncfs-node05
+    hostname: node05
+    command: ["/peers", "node05:5555"]
+    volumes:
+      - ./peers/node05:/peers:ro,Z
+      - ./data/node05:/data:rw,Z
+
+  node06:
+    <<: *node
+    container_name: syncfs-node06
+    hostname: node06
+    command: ["/peers", "node06:5555"]
+    volumes:
+      - ./peers/node06:/peers:ro,Z
+      - ./data/node06:/data:rw,Z
+
+  node07:
+    <<: *node
+    container_name: syncfs-node07
+    hostname: node07
+    command: ["/peers", "node07:5555"]
+    volumes:
+      - ./peers/node07:/peers:ro,Z
+      - ./data/node07:/data:rw,Z
+
+  node08:
+    <<: *node
+    container_name: syncfs-node08
+    hostname: node08
+    command: ["/peers", "node08:5555"]
+    volumes:
+      - ./peers/node08:/peers:ro,Z
+      - ./data/node08:/data:rw,Z
+
+  node09:
+    <<: *node
+    container_name: syncfs-node09
+    hostname: node09
+    command: ["/peers", "node09:5555"]
+    volumes:
+      - ./peers/node09:/peers:ro,Z
+      - ./data/node09:/data:rw,Z
+
+  node10:
+    <<: *node
+    container_name: syncfs-node10
+    hostname: node10
+    command: ["/peers", "node10:5555"]
+    volumes:
+      - ./peers/node10:/peers:ro,Z
+      - ./data/node10:/data:rw,Z
+
+networks:
+  mesh:
+    driver: bridge

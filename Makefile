@@ -1,7 +1,7 @@
 .PHONY: config build build-test build-image run-image install \
 	files dry-format format \
 	test test-unit test-integration test-performance \
-	clean
+	demo clean
 
 PODMAN_RUN = podman run -v $$(pwd):/syncfs:rw,Z -v $$HOME/.cache/ccache:/root/.cache/ccache:rw,Z localhost/syncfs-env
 PODMAN_BUILD = podman build -f Containerfile -v $$(pwd):/syncfs:rw,Z -v $$HOME/.cache/ccache:/root/.cache/ccache:rw,Z
@@ -47,6 +47,9 @@ build-image: Containerfile
 run-image: Containerfile.run
 	podman build -f Containerfile.run -v $$(pwd):/syncfs:rw,Z \
 		--build-arg SOURCE_ID=$$(date +%s) -t syncfs .
+
+demo:
+	demo/demo.sh
 
 clean:
 	rm -fr .venv

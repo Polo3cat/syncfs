@@ -100,6 +100,9 @@ The containers are rootless, so `--userns=keep-id` maps the user owning the
 host directories onto the `syncfs` user inside the container. Without it the
 daemon cannot write into `/data`.
 
+For a ten-node mesh with a scripted walkthrough, run `make demo`; see
+[`demo/README.md`](demo/README.md).
+
 ### Across real hosts
 
 Give each container the host's own network namespace, so the address it
@@ -263,6 +266,7 @@ tests/
   integration/    pytest against real daemons
   performance/    pytest-benchmark
 tools/measure/    Measurement harnesses
+demo/             Ten-node Podman compose demo
 cmake/            Warnings, sanitizers, static analyzers, hardening
 SPEC.md           The specification: constraints, invariants, research
 ```
